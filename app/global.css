@@ -1,11 +1,290 @@
-@import 'tailwindcss';
-@import 'fumadocs-ui/css/neutral.css';
-@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-ui/style.css';
 
 :root {
-  --font-sans: "Avenir Next", "Söhne", "Helvetica Neue", sans-serif;
+  --paper: #fbfbf2;
+  --ink: #121213;
+  --signal: #2b5fff;
+  --signal-soft: color-mix(in oklab, var(--signal) 12%, var(--paper));
+  --signal-tint: color-mix(in oklab, var(--signal) 6%, var(--paper));
+  --accent: #d33a4e;
+  --accent-soft: color-mix(in oklab, var(--accent) 18%, var(--paper));
+  --ok: #1f8a5b;
+  --steel: #55564f;
+  --steel-soft: #7c7d72;
+  --rule: #deded0;
+  --rule-strong: #b9baa8;
+  --shadow-dither: radial-gradient(circle at 1px 1px, var(--rule-strong) 0 1px, transparent 1.1px);
+  --hash-strip: repeating-linear-gradient(90deg, var(--rule-strong) 0 1px, transparent 1px 6px);
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Diatype", "ABC Diatype", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --serif: "Newsreader", "Times New Roman", serif;
+
+  --color-fd-background: var(--paper);
+  --color-fd-foreground: var(--ink);
+  --color-fd-muted: color-mix(in oklab, var(--rule) 60%, var(--paper));
+  --color-fd-muted-foreground: var(--steel);
+  --color-fd-popover: var(--paper);
+  --color-fd-popover-foreground: var(--ink);
+  --color-fd-card: color-mix(in oklab, var(--paper) 92%, white);
+  --color-fd-card-foreground: var(--ink);
+  --color-fd-border: var(--rule);
+  --color-fd-primary: var(--signal);
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: color-mix(in oklab, var(--paper) 86%, var(--rule));
+  --color-fd-secondary-foreground: var(--ink);
+  --color-fd-accent: var(--signal-soft);
+  --color-fd-accent-foreground: var(--ink);
+  --color-fd-ring: var(--signal);
+  --color-fd-overlay: rgba(18, 18, 19, 0.24);
+  color-scheme: light;
+}
+
+.dark {
+  --paper: #121213;
+  --ink: #f7f7ec;
+  --signal: #6b8aff;
+  --signal-soft: color-mix(in oklab, var(--signal) 18%, var(--paper));
+  --signal-tint: color-mix(in oklab, var(--signal) 8%, var(--paper));
+  --accent: #ff6a7d;
+  --accent-soft: color-mix(in oklab, var(--accent) 18%, var(--paper));
+  --ok: #5fd0a0;
+  --steel: #a0a294;
+  --steel-soft: #7c7d72;
+  --rule: #282a25;
+  --rule-strong: #4d5143;
+
+  --color-fd-background: var(--paper);
+  --color-fd-foreground: var(--ink);
+  --color-fd-muted: color-mix(in oklab, var(--rule) 72%, var(--paper));
+  --color-fd-muted-foreground: var(--steel);
+  --color-fd-popover: color-mix(in oklab, var(--paper) 92%, black);
+  --color-fd-popover-foreground: var(--ink);
+  --color-fd-card: color-mix(in oklab, var(--paper) 92%, white 2%);
+  --color-fd-card-foreground: var(--ink);
+  --color-fd-border: var(--rule);
+  --color-fd-primary: var(--signal);
+  --color-fd-primary-foreground: #0b0d18;
+  --color-fd-secondary: color-mix(in oklab, var(--paper) 78%, var(--rule));
+  --color-fd-secondary-foreground: var(--ink);
+  --color-fd-accent: var(--signal-soft);
+  --color-fd-accent-foreground: var(--ink);
+  --color-fd-ring: var(--signal);
+  --color-fd-overlay: rgba(0, 0, 0, 0.36);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  font-family: var(--font-sans);
+  position: relative;
+  isolation: isolate;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  letter-spacing: -0.005em;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--shadow-dither);
+  background-size: 6px 6px;
+  opacity: 0.42;
+  mask-image: linear-gradient(135deg, transparent 0%, transparent 24%, black 68%, black 100%);
+  -webkit-mask-image: linear-gradient(135deg, transparent 0%, transparent 24%, black 68%, black 100%);
+}
+
+body > *:not(script) {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  background: var(--signal);
+  color: var(--color-fd-primary-foreground);
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--paper);
+  background-image: var(--shadow-dither);
+  background-size: 4px 4px;
+  border-left: 1px solid var(--rule);
+}
+
+::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  background: var(--ink);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--signal);
+}
+
+.s46-wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.s46-wordmark__mark {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  background: var(--signal);
+  transform: translateY(2px);
+}
+
+.s46-wordmark__name {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.s46-wordmark__domain {
+  color: var(--steel);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.s46-wordmark__tag {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  padding: 2px 6px;
+}
+
+#nd-docs-layout {
+  --fd-layout-width: 1500px;
+}
+
+#nd-sidebar {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--paper) 95%, transparent), color-mix(in oklab, var(--paper) 88%, transparent)),
+    var(--paper);
+  border-color: var(--rule);
+}
+
+#nd-sidebar [data-search-full] {
+  min-height: 42px;
+  border-color: var(--rule-strong);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 0 var(--rule);
+  font-family: var(--mono);
+  transition-property: background-color, color, box-shadow;
+}
+
+#nd-sidebar [data-search-full]:hover {
+  box-shadow: 6px 6px 0 0 var(--rule-strong);
+}
+
+#nd-sidebar a[data-active="true"] {
+  border-radius: 0;
+  box-shadow: inset 3px 0 0 var(--signal);
+  font-weight: 600;
+}
+
+#nd-sidebar a,
+#nd-toc a,
+#nd-subnav a {
+  text-wrap: pretty;
+}
+
+#nd-toc {
+  color: var(--steel);
+}
+
+#nd-page article {
+  font-size: 16px;
+  line-height: 1.72;
+}
+
+#nd-page h1,
+#nd-page h2,
+#nd-page h3 {
+  color: var(--ink);
+  font-family: var(--sans);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+#nd-page h1 {
+  max-width: min(15ch, 100%);
+  font-size: clamp(44px, 7.6vw, 85px);
+  line-height: 0.98;
+}
+
+#nd-page h2 {
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.08;
+}
+
+#nd-page h3 {
+  font-size: clamp(19px, 2vw, 24px);
+  line-height: 1.16;
+}
+
+#nd-page p,
+#nd-page li {
+  text-wrap: pretty;
+}
+
+#nd-page code:not(pre code) {
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--signal) 6%, var(--paper));
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+#nd-page pre {
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 0 var(--rule);
+}
+
+#nd-page table {
+  font-size: 14px;
+}
+
+#nd-page th {
+  color: var(--steel);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#nd-page td code {
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
 }

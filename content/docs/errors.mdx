@@ -3,7 +3,7 @@ title: Errors and status codes
 description: Shared error response contract.
 ---
 
-All failures return JSON:
+All JSON failures return:
 
 ```json
 {
@@ -14,17 +14,40 @@ All failures return JSON:
 }
 ```
 
+Some authentication bootstrap errors include additional fields, but clients should branch on HTTP status plus `error.code`.
+
 ## Common codes
 
 | HTTP | Code | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_request` | malformed JSON, invalid team slug, unsupported state |
-| 401 | `unauthorized` | missing/expired bearer token or admin credential |
-| 403 | `forbidden` | authenticated user lacks owner/admin role for target org/team |
-| 404 | `not_found` | target resource does not exist |
+| 400 | `invalid_request` | malformed JSON, invalid path/query value, unsupported state |
+| 401 | `authenticate_first` | browser/device approval requires an authenticated magic-link session first |
+| 401 | `unauthorized` | missing, expired, revoked, or invalid bearer/cookie credential |
+| 403 | `not_invited` | email is not currently invited or invitation was revoked |
+| 403 | `forbidden` | authenticated user lacks owner/admin role for target org/team, or model/team is disallowed |
+| 404 | `not_found` | target resource does not exist or is not visible to the credential |
+| 405 | `method_not_allowed` | route exists but HTTP method is unsupported |
 | 409 | `conflict` | resource conflict or duplicate state |
-| 410 | `expired` | login or magic link expired |
-| 428 | `authorization_pending` | device login not approved yet |
-| 503 | `email_unavailable` | production invite email delivery is not configured or failed |
+| 410 | `expired` | login, magic link, or token expired |
+| 428 | `authorization_pending` | polling target is not ready yet |
+| 429 | `capacity_limited` | model/worker capacity exists but is temporarily saturated |
+| 503 | `email_unavailable` | production invite or magic-link email delivery is not configured or failed |
+| 503 | `model_unavailable` | no ready upstream/local model worker is available |
+| 500 | `internal_error` | unhandled server-side failure |
 
-Clients should branch on status plus `error.code`.
+## `authorization_pending`
+
+`authorization_pending` is used by polling-style endpoints where the caller should retry later:
+
+- device login waiting for magic-link approval
+- session attach waiting for a queued remote session
+- worker job leasing when no compatible work is currently available or the worker cannot lease yet
+
+Branch on the endpoint context rather than treating this code as device-login-only.
+
+## Client guidance
+
+- Retry `authorization_pending` after the endpoint-specific polling interval or exponential backoff.
+- Refresh credentials on `401 unauthorized` only when the client has a valid refresh token/cookie.
+- Do not retry `403 forbidden` without changing credentials or membership.
+- Do not parse `message`; it is human-readable and may change.

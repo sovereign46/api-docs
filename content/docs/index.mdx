@@ -5,26 +5,58 @@ description: Production contract for the Sovereign46 API.
 
 Base URL: `https://api.s46.dev`.
 
+Machine-readable schema: [`/openapi.json`](/openapi.json). LLM index: [`/llms.txt`](/llms.txt).
+
 The API is explicitly org-scoped. Teams use canonical `@org/team` identifiers, for example `@s46/engineering`. Tenant wildcard hosts are not part of the contract; harness traffic routes through `https://gateway.s46.dev` unless a development or airplane-mode endpoint is configured.
 
 ## Core rules
 
-- No `acme` default tenant or production seed data.
-- Browser and CLI clients use user-scoped bearer tokens from the magic-link/device flow.
+- Browser and CLI clients use user-scoped bearer tokens from the invite-gated magic-link/device flow.
 - Admin authorization accepts only `owner` and `admin` roles.
 - Membership roles are exactly `owner`, `admin`, `member`, and `viewer`.
 - The product term is `region`; legacy `lane` should not appear in new API payloads.
 - Production frontends must not expose `S46_ADMIN_TOKEN`.
+- No `acme` default tenant or production seed data.
+
+## Request conventions
+
+Authenticated JSON endpoints use:
+
+```txt
+Authorization: Bearer <accessToken>
+Accept: application/json
+Content-Type: application/json
+```
+
+All path parameters must be URL path-escaped. This matters for team IDs, emails, device IDs, worker IDs, job IDs, and session IDs:
+
+| Value | Path segment |
+| --- | --- |
+| `@s46/engineering` | `%40s46%2Fengineering` |
+| `dscape@s46.dev` | `dscape%40s46.dev` |
+| `@dscape/auth-redirect-fix` | `%40dscape%2Fauth-redirect-fix` |
+
+Query parameters must be query-escaped, for example `?team=%40s46%2Fengineering`.
+
+## Current clients
+
+| Client | Uses | Auth |
+| --- | --- | --- |
+| `s46-cli` | `/v1/auth/*`, `/v1/me`, `/v1/devices`, `/v1/teams/{team}`, `/v1/sessions*` | user bearer token |
+| Admin UI | `/v1/auth/*`, `/v1/me`, `/v1/admin/*` | user bearer token plus same-site auth cookies in browser flows |
+| `s46-worker` | `/v1/worker/register`, `/v1/worker/heartbeat`, `/v1/worker/jobs/lease`, `/v1/worker/jobs/complete` | admin bearer for registration, worker bearer after registration |
+| Harnesses | gateway-compatible model routes under the team `endpoint` | user token command/provider config |
 
 ## Route groups
 
 | Group | Prefix | Purpose |
 | --- | --- | --- |
-| Auth | `/v1/auth` | invite-gated device login, magic-link approval, refresh |
+| Auth | `/v1/auth` | invite-gated device login, magic-link approval, refresh, logout |
 | Account | `/v1/me`, `/v1/devices` | current user and paired devices |
 | Teams/sessions | `/v1/teams`, `/v1/sessions` | CLI team metadata and session actions |
-| Admin | `/v1/admin` | organizations, people, teams, models, workers, jobs, schedules, usage, audit |
-| Worker | `/v1/worker`, `/v1/internal` | registration, heartbeat, job lease/complete/ack |
+| Admin | `/v1/admin` | organizations, people, teams, policies, models, workers, jobs, schedules, usage, audit |
+| Worker control | `/v1/worker`, `/v1/internal` | registration, heartbeat, job lease/complete, lease acknowledgement |
+| Harness gateway | `https://gateway.s46.dev` | OpenAI, Anthropic, and Codex-compatible model APIs |
 
 ## Errors
 

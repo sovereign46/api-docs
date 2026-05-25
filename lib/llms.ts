@@ -15,6 +15,7 @@ export function buildLlmsText() {
 
 Canonical URLs:
 - Docs: ${SITE_URL}/docs
+- OpenAPI: ${SITE_URL}/openapi.json
 - API: https://api.s46.dev
 - Harness gateway: https://gateway.s46.dev
 

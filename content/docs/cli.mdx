@@ -3,7 +3,30 @@ title: CLI contract
 description: Endpoints and payloads used by s46-cli.
 ---
 
-`s46-cli` defaults to `https://api.s46.dev`. Development overrides are `S46_API_BASE_URL`, `S46_API_MODE=mock`, `S46_DEV_SHELL`, and `S46_DEV_BASE_URL`.
+`s46-cli` defaults to `https://api.s46.dev`.
+
+Development overrides:
+
+| Variable | Purpose |
+| --- | --- |
+| `S46_API_BASE_URL` | use a specific control-plane base URL |
+| `S46_API_MODE=mock` | use the built-in mock client in non-release builds |
+| `S46_DEV_SHELL=1` + `S46_DEV_BASE_URL` | dev shell control-plane override |
+
+Authenticated calls send `Authorization: Bearer <accessToken>`. Access tokens are never serialized in JSON request bodies.
+
+## Auth and account usage
+
+The CLI uses:
+
+- `POST /v1/auth/device/start`
+- `POST /v1/auth/device/poll`
+- `POST /v1/auth/token/refresh`
+- `GET /v1/me`
+- `GET /v1/devices`
+- `DELETE /v1/devices/{deviceId}`
+
+See [Auth and account](/docs/auth) for payloads.
 
 ## Team metadata
 
@@ -12,6 +35,17 @@ description: Endpoints and payloads used by s46-cli.
 Path-escape the canonical team id. Example:
 
 `GET /v1/teams/%40s46%2Fengineering`
+
+Optional query parameters kept for CLI compatibility:
+
+| Parameter | Purpose |
+| --- | --- |
+| `endpoint` | development override for the harness endpoint |
+| `region` | development override for the scheduling region |
+| `mode` | team mode override, for example `cloud` or `airplane` |
+| `defaultModel` | development override for the default model |
+
+Response:
 
 ```json
 {
@@ -27,9 +61,11 @@ Path-escape the canonical team id. Example:
 }
 ```
 
+Clients should use the returned `endpoint`, `region`, `defaultModel`, and `models` instead of hard-coding production values.
+
 ## Sessions
 
-All session list/action endpoints are authenticated and scoped with `?team=@org/team`.
+All session list/action endpoints are authenticated and scoped with `?team={team}`. The `team` query parameter must be query-escaped.
 
 - `GET /v1/sessions?team={team}`
 - `POST /v1/sessions/{sessionId}/detach?team={team}`
@@ -37,7 +73,75 @@ All session list/action endpoints are authenticated and scoped with `?team=@org/
 - `POST /v1/sessions/{sessionId}/attach?team={team}`
 - `POST /v1/sessions/{sessionId}/land?team={team}`
 
-Session payloads use `region`, not `lane`.
+`sessionId` may contain `/` and must be URL path-escaped.
+
+Session payloads use `region`, not `lane`:
+
+```json
+{
+  "id": "@dscape/auth-redirect-fix",
+  "state": "running",
+  "harness": "claude-code",
+  "location": "worker:worker_01",
+  "region": "EU-OPO",
+  "model": "s46/kimi-k2.6",
+  "age": "4m",
+  "spent": "€0.00",
+  "task": "Fix auth redirect"
+}
+```
+
+### Detach
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "harness": "claude-code",
+  "team": { "name": "@s46/engineering" }
+}
+```
+
+Returns a session object. Detach is job-backed on the control plane.
+
+### Resume
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "target": "remote",
+  "session": { "id": "@dscape/auth-redirect-fix" },
+  "team": { "name": "@s46/engineering" }
+}
+```
+
+`target` defaults to `remote`; `target: "local"` asks the CLI/API to materialize locally when supported.
+
+### Attach
+
+Returns transport metadata when the remote session is attachable:
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "url": "https://api.s46.dev/v1/sessions/dscape%2Fauth-redirect-fix/stream?team=%40s46%2Fengineering",
+  "protocol": "sse"
+}
+```
+
+If the session is still queued, the API returns `428 authorization_pending`.
+
+### Land
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "title": "Fix auth redirect",
+  "session": { "id": "@dscape/auth-redirect-fix" },
+  "team": { "name": "@s46/engineering" }
+}
+```
+
+Returns landing/review metadata, including branch, harness, model, cost, status, optional `pullRequestUrl`, and a review checklist.
 
 ## Harness endpoint contract
 

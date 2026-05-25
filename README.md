@@ -10,7 +10,7 @@ npm run dev
 npm run build
 ```
 
-Open `http://localhost:3000/docs`.
+Open `http://localhost:3000/docs`. The OpenAPI document is served at `http://localhost:3000/openapi.json`.
 
 The docs track the production contract in `s46-api` and intentionally use canonical `@org/team` team ids, `region` terminology, and `https://gateway.s46.dev` harness routing.
 

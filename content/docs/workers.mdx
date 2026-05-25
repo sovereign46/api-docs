@@ -5,9 +5,17 @@ description: Registration, heartbeats, leases, completion, logs, and acknowledge
 
 Workers are scoped to an organization and, when applicable, a team. The canonical scheduling dimension is `region`.
 
+Worker control routes are JSON-only. Registration is admin-authorized; successful registration returns a worker token. Heartbeat, lease, and completion calls require that worker token:
+
+```txt
+Authorization: Bearer <worker-token>
+```
+
 ## Register
 
 `POST /v1/worker/register`
+
+Requires `Authorization: Bearer <admin token or owner/admin user token>` scoped to the target team.
 
 ```json
 {
@@ -23,46 +31,154 @@ Workers are scoped to an organization and, when applicable, a team. The canonica
 }
 ```
 
-Response includes the worker record and a worker token. Store the token securely; it is required for heartbeat, lease, and completion calls.
+`kind` is one of:
 
-## Heartbeat
+- `execution_worker`
+- `model_worker`
+- `hybrid_worker`
 
-`POST /v1/worker/{workerId}/heartbeat`
+Response `201 Created`:
 
 ```json
 {
-  "state": "ready",
-  "capacity": { "slots": 2, "maxConcurrent": 1, "inUse": 0 },
-  "models": ["s46/kimi-k2.6"],
-  "modelDetails": [{ "id": "s46/kimi-k2.6", "ready": true }]
+  "worker": {
+    "id": "worker_01",
+    "team": "@s46/engineering",
+    "kind": "execution_worker",
+    "region": "EU-OPO",
+    "version": "0.3.0",
+    "state": "ready",
+    "capabilities": ["vm_boundary", "pi"],
+    "capacity": { "slots": 2, "maxConcurrent": 1 },
+    "models": ["s46/kimi-k2.6"],
+    "createdAt": "2030-01-01T12:00:00Z",
+    "updatedAt": "2030-01-01T12:00:00Z"
+  },
+  "token": "wkr_..."
 }
 ```
 
-## Lease jobs
+Store the returned token securely; it is required for heartbeat, lease, and completion calls.
 
-`POST /v1/worker/{workerId}/lease`
+## Heartbeat
 
-Returns a job and lease when work is available. If no work is available, the API returns `authorization_pending` semantics for polling clients.
-
-## Complete jobs
-
-`POST /v1/worker/{workerId}/jobs/{jobId}/complete`
+`POST /v1/worker/heartbeat`
 
 ```json
 {
-  "state": "succeeded",
-  "payload": { "summary": "completed" },
-  "usage": {
-    "inputTokens": 1000,
-    "outputTokens": 200,
-    "costMicros": 4200000
+  "workerId": "worker_01",
+  "heartbeat": {
+    "state": "ready",
+    "capacity": { "slots": 2, "maxConcurrent": 1, "inUse": 0 },
+    "models": ["s46/kimi-k2.6"],
+    "modelDetails": [{ "id": "s46/kimi-k2.6", "ready": true, "state": "ready" }]
   }
 }
 ```
 
-## Logs and lease acknowledgement
+Response `200 OK` is the updated worker record.
 
-Workers and admin tooling can append/read logs through the admin worker/job log routes. Internal lease acknowledgements use:
+Worker states:
+
+- `starting`
+- `ready`
+- `busy`
+- `draining`
+- `unhealthy`
+- `offline`
+
+Model states:
+
+- `missing`
+- `downloading`
+- `verifying`
+- `loading`
+- `ready`
+- `failed`
+
+## Lease jobs
+
+`POST /v1/worker/jobs/lease`
+
+```json
+{
+  "workerId": "worker_01",
+  "leaseSeconds": 300
+}
+```
+
+Response `200 OK` when work is available:
+
+```json
+{
+  "job": {
+    "id": "job_01",
+    "team": "@s46/engineering",
+    "sessionId": "@dscape/auth-redirect-fix",
+    "kind": "execution",
+    "state": "leased",
+    "priority": 0,
+    "region": "EU-OPO",
+    "harness": "pi",
+    "model": "s46/kimi-k2.6",
+    "workerId": "worker_01",
+    "leaseId": "lease_01",
+    "payload": {}
+  },
+  "lease": {
+    "id": "lease_01",
+    "jobId": "job_01",
+    "workerId": "worker_01",
+    "state": "active",
+    "expiresAt": "2030-01-01T12:05:00Z"
+  }
+}
+```
+
+If no compatible work is available, the current API returns `428 authorization_pending`. Worker clients should treat that as “no lease yet” for this endpoint and poll again after backoff. This code is also used by device login and queued session attach, so branch on the endpoint context.
+
+## Complete jobs
+
+`POST /v1/worker/jobs/complete`
+
+```json
+{
+  "workerId": "worker_01",
+  "jobId": "job_01",
+  "leaseId": "lease_01",
+  "completion": {
+    "state": "succeeded",
+    "payload": { "summary": "completed" },
+    "usage": {
+      "eventType": "job_completed",
+      "inputTokens": 1000,
+      "outputTokens": 200,
+      "costMicros": 4200000
+    }
+  }
+}
+```
+
+Allowed completion states:
+
+- `succeeded`
+- `failed`
+- `canceled`
+
+Response `200 OK` is the updated job record.
+
+## Logs
+
+Admin tooling can read worker/job logs through read-only admin routes:
+
+- `GET /v1/admin/workers/{id}/logs?limit=100`
+- `GET /v1/admin/jobs/{id}/logs?limit=100`
+
+There is no public worker log-append endpoint in the current API. Job logs are written internally by lease acknowledgement/completion paths and by control-plane automation.
+
+## Lease acknowledgement
+
+Internal lease acknowledgements use:
 
 `POST /v1/internal/leases/ack`
 
@@ -74,4 +190,18 @@ Workers and admin tooling can append/read logs through the admin worker/job log 
 }
 ```
 
-Response: `202 Accepted` with `{ "acknowledged": true }`.
+Response `202 Accepted`:
+
+```json
+{ "acknowledged": true }
+```
+
+## Common failures
+
+| HTTP | Code | Meaning |
+| --- | --- | --- |
+| 400 | `invalid_request` | malformed JSON or unsupported state |
+| 401 | `unauthorized` | missing/invalid worker token |
+| 403 | `forbidden` | registration token is not owner/admin for the target team |
+| 404 | `not_found` | worker, job, or lease does not exist or does not belong to token |
+| 428 | `authorization_pending` | no compatible lease is available yet, worker cannot lease yet, or capacity is full |

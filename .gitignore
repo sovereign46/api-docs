@@ -2,6 +2,7 @@ node_modules
 .next
 out
 .source
+*.tsbuildinfo
 .DS_Store
 
 # Local secrets

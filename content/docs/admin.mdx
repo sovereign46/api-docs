@@ -5,40 +5,106 @@ description: Organization, team, people, model, job, schedule, usage, and audit 
 
 Admin routes require a bearer token whose user has `owner` or `admin` role in the target organization/team. `S46_ADMIN_TOKEN` is reserved for operator automation and must not be embedded in browser code.
 
+All path parameters must be URL path-escaped. This is required for `{team}` (`@s46/engineering` -> `%40s46%2Fengineering`), `{email}` (`new-admin@example.com` -> `new-admin%40example.com`), worker IDs, job IDs, and device IDs.
+
+## Auth used by the admin UI
+
+The admin UI signs in through the same device flow as the CLI:
+
+- `POST /v1/auth/device/start`
+- `POST /v1/auth/device/poll`
+- `POST /v1/auth/token/refresh`
+- `POST /v1/auth/logout`
+- `GET /v1/me`
+
+See [Auth and account](/docs/auth).
+
 ## Organizations
 
 - `GET /v1/admin/organizations`
 - `POST /v1/admin/organizations`
 - `GET /v1/admin/organizations/{slug}`
 - `PUT /v1/admin/organizations/{slug}`
+- `PATCH /v1/admin/organizations/{slug}`
 - `GET /v1/admin/organization-members?organization={slug}`
 - `POST /v1/admin/organization-members`
+- `PUT /v1/admin/organization-members`
+- `DELETE /v1/admin/organization-members?organization={slug}&email={email}`
 - `GET /v1/admin/organization-roles`
 
 Organization member roles are `owner`, `admin`, `member`, `viewer`.
 
+Organization create/update body:
+
+```json
+{
+  "slug": "s46",
+  "name": "Sovereign46",
+  "displayName": "Sovereign46",
+  "status": "active",
+  "plan": "sovereign-team",
+  "primaryRegion": "EU-OPO",
+  "regions": ["EU-OPO"]
+}
+```
+
+Organization member body:
+
+```json
+{
+  "organizationSlug": "s46",
+  "email": "new-admin@example.com",
+  "role": "admin",
+  "displayName": "New Admin",
+  "status": "active"
+}
+```
+
 ## Teams
 
 - `GET /v1/admin/teams`
+- `GET /v1/admin/teams?team={team}`
 - `POST /v1/admin/teams`
 - `GET /v1/admin/teams/{team}`
 - `PUT /v1/admin/teams/{team}`
+- `PATCH /v1/admin/teams/{team}`
+- `DELETE /v1/admin/teams/{team}`
 
-Use URL-escaped team ids in paths: `@s46/engineering` becomes `%40s46%2Fengineering`.
+Team create/update body:
 
-Team payloads include `organizationSlug`, `slug`, `displayName`, `endpoint`, `region`, `mode`, `workerHosts`, `defaultModel`, `models`, and count/spend summaries when available.
+```json
+{
+  "name": "@s46/engineering",
+  "organizationSlug": "s46",
+  "slug": "engineering",
+  "displayName": "Engineering",
+  "endpoint": "https://gateway.s46.dev",
+  "region": "EU-OPO",
+  "mode": "cloud",
+  "workerHosts": [],
+  "defaultModel": "s46/kimi-k2.6",
+  "models": ["s46/kimi-k2.6"],
+  "monthlyCapMicros": 100000000
+}
+```
+
+Team responses may also include `memberCount`, `deviceCount`, `workerCount`, `spendMicros`, `createdAt`, and `updatedAt`.
 
 ## People and invitations
 
 - `GET /v1/admin/people?organization={slug}`
 - `GET /v1/admin/people/{email}?organization={slug}`
-- `PATCH /v1/admin/people/{email}?organization={slug}`
+- `PATCH /v1/admin/people/{email}`
+- `PUT /v1/admin/people/{email}`
 - `POST /v1/admin/people/invite`
 - `POST /v1/admin/people/{email}/teams`
+- `PUT /v1/admin/people/{email}/teams`
 - `DELETE /v1/admin/people/{email}/teams/{team}`
 - `POST /v1/admin/people/{email}/devices/{deviceId}/revoke?organization={slug}`
-- `POST /v1/admin/people/{email}/invites/{inviteId}/resend?organization={slug}`
+- `POST /v1/admin/people/{email}/invites/resend?organization={slug}`
 - `GET /v1/admin/people/{email}/audit?organization={slug}`
+- `GET /v1/admin/invites?team={team}&status=pending&limit=100`
+- `POST /v1/admin/invite/revoke`
 
 Invite body:
 
@@ -50,34 +116,162 @@ Invite body:
 }
 ```
 
+Team membership body:
+
+```json
+{
+  "team": "@s46/engineering",
+  "organizationSlug": "s46",
+  "slug": "engineering",
+  "role": "member",
+  "displayName": "New Member"
+}
+```
+
+Person status update body:
+
+```json
+{ "status": "suspended" }
+```
+
+Revoke invite body:
+
+```json
+{ "email": "new-admin@example.com" }
+```
+
 ## Models
 
 - `GET /v1/admin/models`
 - `POST /v1/admin/models`
+- `PUT /v1/admin/models`
 
-Catalog entries expose stable model ids, display names, provider, region, capability tags, context window, output limit, costs, backend model, digest, and status.
+Catalog entry body:
+
+```json
+{
+  "id": "s46/kimi-k2.6",
+  "displayName": "Kimi K2.6",
+  "provider": "s46",
+  "region": "EU-OPO",
+  "capabilities": ["chat", "code", "tools"],
+  "contextWindow": 128000,
+  "maxOutputTokens": 8192,
+  "inputCostMicrosPerToken": 0,
+  "outputCostMicrosPerToken": 0,
+  "backendModel": "provider/model-name",
+  "digest": "sha256:...",
+  "status": "ready"
+}
+```
+
+## Harness policies, GitHub, and repositories
+
+- `GET /v1/admin/harness-policies?team={team}`
+- `GET /v1/admin/harness-policies/{team}`
+- `POST /v1/admin/harness-policies/{team}`
+- `PUT /v1/admin/harness-policies/{team}`
+- `GET /v1/admin/github/installations`
+- `POST /v1/admin/github/installations`
+- `GET /v1/admin/repositories?team={team}`
+- `POST /v1/admin/repositories`
+
+Harness policy body:
+
+```json
+{
+  "team": "@s46/engineering",
+  "allowedFunctions": ["read_file", "grep", "bash"],
+  "mandatoryFunctions": [],
+  "landGates": ["tests", "review"],
+  "sandboxProfiles": ["vm-default"],
+  "loopEnabled": true,
+  "exceptionLogging": true,
+  "config": {
+    "networkEgress": "allowlist",
+    "maxRuntime": "8h",
+    "maxSpend": 25
+  }
+}
+```
+
+Repository body:
+
+```json
+{
+  "team": "@s46/engineering",
+  "provider": "github",
+  "installationId": 42,
+  "owner": "sovereign46",
+  "repo": "app",
+  "defaultBranch": "main",
+  "policy": {}
+}
+```
 
 ## Workers and jobs
 
-- `GET /v1/admin/workers?team={team}`
+- `GET /v1/admin/workers?team={team}&kind={kind}&region={region}&state={state}`
 - `GET /v1/admin/workers/{id}`
-- `GET /v1/admin/workers/{id}/logs`
+- `GET /v1/admin/workers/{id}/logs?limit=100`
 - `POST /v1/admin/workers/{id}/drain`
 - `POST /v1/admin/workers/{id}/revoke`
-- `GET /v1/admin/jobs?team={team}`
+- `GET /v1/admin/jobs?team={team}&state={state}&sessionId={sessionId}&kind={kind}`
 - `POST /v1/admin/jobs`
-- `GET /v1/admin/jobs/{id}`
+- `GET /v1/admin/jobs/{id}/logs?limit=100`
 - `POST /v1/admin/jobs/{id}/cancel`
 - `POST /v1/admin/jobs/{id}/retry`
-- `GET /v1/admin/jobs/{id}/logs`
 
-Jobs carry actor, repository, branch, sandbox exception, max runtime, max cost, current cost, worker, and lease fields.
+Job create body:
+
+```json
+{
+  "team": "@s46/engineering",
+  "sessionId": "@dscape/auth-redirect-fix",
+  "kind": "execution",
+  "priority": 0,
+  "region": "EU-OPO",
+  "harness": "pi",
+  "model": "s46/kimi-k2.6",
+  "repository": "sovereign46/app",
+  "branch": "main",
+  "maxRuntimeSeconds": 3600,
+  "maxCostMicros": 1000000,
+  "payload": {}
+}
+```
+
+`POST /v1/admin/jobs` and `POST /v1/admin/schedules` return `202 Accepted` with a job object.
+
+Retry body:
+
+```json
+{ "runAfter": "2030-01-01T12:00:00Z" }
+```
+
+Admin log routes are read-only. Workers do not append logs through the admin API.
 
 ## Schedules, usage, audit
 
 - `GET /v1/admin/schedules?team={team}`
 - `POST /v1/admin/schedules`
-- `GET /v1/admin/usage?team={team}`
+- `GET /v1/admin/usage?team={team}&limit=1000`
 - `GET /v1/admin/audit?team={team}&limit=100`
+- `GET /v1/admin/overview?organization={slug}&team={team}`
+- `POST /v1/admin/leases/reconcile`
+
+Schedule create body is the same as job creation but must include `runAfter`:
+
+```json
+{
+  "team": "@s46/engineering",
+  "sessionId": "@dscape/overnight-refactor",
+  "kind": "execution",
+  "runAfter": "2030-01-01T23:00:00Z",
+  "runBefore": "2030-01-02T07:00:00Z",
+  "maxRuntimeSeconds": 28800,
+  "maxCostMicros": 25000000
+}
+```
 
 These routes are live API routes even if parts of the product UI remain coming soon.

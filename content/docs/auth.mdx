@@ -5,6 +5,8 @@ description: Magic-link device login and user-scoped bearer tokens.
 
 The CLI and admin UI use the same invite-gated device flow. A user must have an active invitation before login can start.
 
+Access tokens are short-lived and device-bound. Refresh tokens are also device-bound and may rotate; clients must persist the latest returned refresh token. Revoking a paired device invalidates that device's token family.
+
 ## Start device login
 
 `POST /v1/auth/device/start`
@@ -17,38 +19,73 @@ The CLI and admin UI use the same invite-gated device flow. A user must have an 
 }
 ```
 
+Fields:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `email` | yes | invited account email |
+| `deviceId` | yes | stable client-chosen revocable device id |
+| `deviceName` | no | human-readable device label |
+
 Response `202 Accepted`:
 
 ```json
 {
-  "deviceCode": "...",
+  "deviceCode": "s46_device_...",
   "userCode": "WXYZ-1234",
   "verificationUri": "https://api.s46.dev/v1/auth/magic/consume?token=...",
   "intervalSeconds": 2,
-  "expiresAt": "2026-05-24T12:00:00Z"
+  "expiresAt": "2030-01-01T12:00:00Z"
 }
 ```
+
+Common failures: `403 not_invited`, `400 invalid_request`, `503 email_unavailable`.
+
+## Approve magic link
+
+`GET /v1/auth/magic/consume?token=...` renders the confirmation page. The `GET` validates but does not consume the token, so email scanners cannot approve a login.
+
+`POST /v1/auth/magic/consume` consumes the token and approves the pending device. Browser forms send `application/x-www-form-urlencoded` with `token=...`; JSON clients may send:
+
+```json
+{ "token": "..." }
+```
+
+Reuse or expired links fail with `401 unauthorized` or `410 expired`.
 
 ## Poll device login
 
 `POST /v1/auth/device/poll`
 
 ```json
-{ "deviceCode": "..." }
+{ "deviceCode": "s46_device_..." }
 ```
 
-Pending approval returns `428` with `authorization_pending`. Approved login returns tokens:
+Pending approval returns `428 authorization_pending`:
+
+```json
+{
+  "error": {
+    "code": "authorization_pending",
+    "message": "authorization pending"
+  }
+}
+```
+
+Approved login returns tokens:
 
 ```json
 {
   "account": "dscape@s46.dev",
   "team": "@s46/engineering",
   "deviceId": "dev-laptop",
-  "accessToken": "...",
-  "refreshToken": "...",
-  "expiresAt": "2026-05-24T13:00:00Z"
+  "accessToken": "s46_access_...",
+  "refreshToken": "s46_refresh_...",
+  "expiresAt": "2030-01-01T13:00:00Z"
 }
 ```
+
+Browser clients that send `X-S46-Use-Cookies: true` receive auth cookies and a redacted token set in the JSON body.
 
 ## Refresh
 
@@ -57,17 +94,31 @@ Pending approval returns `428` with `authorization_pending`. Approved login retu
 ```json
 {
   "account": "dscape@s46.dev",
-  "refreshToken": "..."
+  "refreshToken": "s46_refresh_..."
 }
 ```
 
-Refresh tokens are device-bound and may rotate. Clients must persist the latest returned refresh token.
+Response is the same token-set shape as approved device polling. Clients must replace the stored refresh token when a new one is returned.
+
+Browser clients may send `X-S46-Use-Cookies: true` and omit the JSON body; the API reads the refresh token from the auth cookie, rotates credentials, and refreshes cookies.
+
+## Logout
+
+`POST /v1/auth/logout`
+
+Clears browser auth cookies and returns:
+
+```json
+{ "ok": true }
+```
+
+CLI clients usually revoke devices instead of calling logout.
 
 ## Current user
 
 `GET /v1/me`
 
-Requires `Authorization: Bearer <access token>`.
+Requires `Authorization: Bearer <accessToken>` or a valid browser auth cookie.
 
 ```json
 {
@@ -83,4 +134,20 @@ Requires `Authorization: Bearer <access token>`.
 - `GET /v1/devices`
 - `DELETE /v1/devices/{deviceId}`
 
-Deleting the current device invalidates its token family.
+`GET /v1/devices` returns active devices:
+
+```json
+{
+  "devices": [
+    {
+      "id": "dev-laptop",
+      "name": "Dev laptop",
+      "createdAt": "2030-01-01T10:00:00Z",
+      "lastSeenAt": "2030-01-01T12:30:00Z",
+      "lastSeenIp": "203.0.113.10"
+    }
+  ]
+}
+```
+
+Deleting the current device invalidates its token family immediately. `deviceId` must be URL path-escaped.

@@ -1,0 +1,52 @@
+---
+title: CLI contract
+description: Endpoints and payloads used by s46-cli.
+---
+
+# CLI contract
+
+`s46-cli` defaults to `https://api.s46.dev`. Development overrides are `S46_API_BASE_URL`, `S46_API_MODE=mock`, `S46_DEV_SHELL`, and `S46_DEV_BASE_URL`.
+
+## Team metadata
+
+`GET /v1/teams/{team}`
+
+Path-escape the canonical team id. Example:
+
+`GET /v1/teams/%40s46%2Fengineering`
+
+```json
+{
+  "name": "@s46/engineering",
+  "organizationSlug": "s46",
+  "slug": "engineering",
+  "endpoint": "https://gateway.s46.dev",
+  "region": "EU-OPO",
+  "mode": "cloud",
+  "workerHosts": [],
+  "defaultModel": "s46/kimi-k2.6",
+  "models": ["s46/kimi-k2.6"]
+}
+```
+
+## Sessions
+
+All session list/action endpoints are authenticated and scoped with `?team=@org/team`.
+
+- `GET /v1/sessions?team={team}`
+- `POST /v1/sessions/{sessionId}/detach?team={team}`
+- `POST /v1/sessions/{sessionId}/resume?team={team}`
+- `POST /v1/sessions/{sessionId}/attach?team={team}`
+- `POST /v1/sessions/{sessionId}/land?team={team}`
+
+Session payloads use `region`, not `lane`.
+
+## Harness endpoint contract
+
+Harness adapters should use the team `endpoint` directly:
+
+- Pi OpenAI-compatible API: `{endpoint}/v1`
+- Claude Code Anthropic-compatible API: `{endpoint}/anthropic`
+- Codex Responses API: `{endpoint}/codex`
+
+Production endpoint: `https://gateway.s46.dev`.

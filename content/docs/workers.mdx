@@ -1,0 +1,79 @@
+---
+title: Worker protocol
+description: Registration, heartbeats, leases, completion, logs, and acknowledgements.
+---
+
+# Worker protocol
+
+Workers are scoped to an organization and, when applicable, a team. The canonical scheduling dimension is `region`.
+
+## Register
+
+`POST /v1/worker/register`
+
+```json
+{
+  "team": "@s46/engineering",
+  "kind": "execution_worker",
+  "region": "EU-OPO",
+  "version": "0.3.0",
+  "endpoint": "https://worker-01.example",
+  "protocol": "sse",
+  "capabilities": ["vm_boundary", "pi"],
+  "capacity": { "slots": 2, "maxConcurrent": 1 },
+  "models": ["s46/kimi-k2.6"]
+}
+```
+
+Response includes the worker record and a worker token. Store the token securely; it is required for heartbeat, lease, and completion calls.
+
+## Heartbeat
+
+`POST /v1/worker/{workerId}/heartbeat`
+
+```json
+{
+  "state": "ready",
+  "capacity": { "slots": 2, "maxConcurrent": 1, "inUse": 0 },
+  "models": ["s46/kimi-k2.6"],
+  "modelDetails": [{ "id": "s46/kimi-k2.6", "ready": true }]
+}
+```
+
+## Lease jobs
+
+`POST /v1/worker/{workerId}/lease`
+
+Returns a job and lease when work is available. If no work is available, the API returns `authorization_pending` semantics for polling clients.
+
+## Complete jobs
+
+`POST /v1/worker/{workerId}/jobs/{jobId}/complete`
+
+```json
+{
+  "state": "succeeded",
+  "payload": { "summary": "completed" },
+  "usage": {
+    "inputTokens": 1000,
+    "outputTokens": 200,
+    "costMicros": 4200000
+  }
+}
+```
+
+## Logs and lease acknowledgement
+
+Workers and admin tooling can append/read logs through the admin worker/job log routes. Internal lease acknowledgements use:
+
+`POST /v1/internal/leases/ack`
+
+```json
+{
+  "workerId": "worker_01",
+  "jobId": "job_01",
+  "leaseId": "lease_01"
+}
+```
+
+Response: `202 Accepted` with `{ "acknowledged": true }`.

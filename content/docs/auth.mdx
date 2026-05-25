@@ -1,0 +1,88 @@
+---
+title: Auth and account
+description: Magic-link device login and user-scoped bearer tokens.
+---
+
+# Auth and account
+
+The CLI and admin UI use the same invite-gated device flow. A user must have an active invitation before login can start.
+
+## Start device login
+
+`POST /v1/auth/device/start`
+
+```json
+{
+  "email": "dscape@s46.dev",
+  "deviceId": "dev-laptop",
+  "deviceName": "Dev laptop"
+}
+```
+
+Response `202 Accepted`:
+
+```json
+{
+  "deviceCode": "...",
+  "userCode": "WXYZ-1234",
+  "verificationUri": "https://api.s46.dev/v1/auth/magic/consume?token=...",
+  "intervalSeconds": 2,
+  "expiresAt": "2026-05-24T12:00:00Z"
+}
+```
+
+## Poll device login
+
+`POST /v1/auth/device/poll`
+
+```json
+{ "deviceCode": "..." }
+```
+
+Pending approval returns `428` with `authorization_pending`. Approved login returns tokens:
+
+```json
+{
+  "account": "dscape@s46.dev",
+  "team": "@s46/engineering",
+  "deviceId": "dev-laptop",
+  "accessToken": "...",
+  "refreshToken": "...",
+  "expiresAt": "2026-05-24T13:00:00Z"
+}
+```
+
+## Refresh
+
+`POST /v1/auth/token/refresh`
+
+```json
+{
+  "account": "dscape@s46.dev",
+  "refreshToken": "..."
+}
+```
+
+Refresh tokens are device-bound and may rotate. Clients must persist the latest returned refresh token.
+
+## Current user
+
+`GET /v1/me`
+
+Requires `Authorization: Bearer <access token>`.
+
+```json
+{
+  "email": "dscape@s46.dev",
+  "organization": "s46",
+  "team": "@s46/engineering",
+  "role": "owner"
+}
+```
+
+## Devices
+
+- `GET /v1/devices`
+- `DELETE /v1/devices/{deviceId}`
+
+Deleting the current device invalidates its token family.

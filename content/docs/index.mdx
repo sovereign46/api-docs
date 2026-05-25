@@ -1,0 +1,44 @@
+---
+title: Overview
+description: Production contract for the Sovereign46 API.
+---
+
+# s46 API
+
+Base URL: `https://api.s46.dev`.
+
+The API is explicitly org-scoped. Teams use canonical `@org/team` identifiers, for example `@s46/engineering`. Tenant wildcard hosts are not part of the contract; harness traffic routes through `https://gateway.s46.dev` unless a development or airplane-mode endpoint is configured.
+
+## Core rules
+
+- No `acme` default tenant or production seed data.
+- Browser and CLI clients use user-scoped bearer tokens from the magic-link/device flow.
+- Admin authorization accepts only `owner` and `admin` roles.
+- Membership roles are exactly `owner`, `admin`, `member`, and `viewer`.
+- The product term is `region`; legacy `lane` should not appear in new API payloads.
+- Production frontends must not expose `S46_ADMIN_TOKEN`.
+
+## Route groups
+
+| Group | Prefix | Purpose |
+| --- | --- | --- |
+| Auth | `/v1/auth` | invite-gated device login, magic-link approval, refresh |
+| Account | `/v1/me`, `/v1/devices` | current user and paired devices |
+| Teams/sessions | `/v1/teams`, `/v1/sessions` | CLI team metadata and session actions |
+| Admin | `/v1/admin` | organizations, people, teams, models, workers, jobs, schedules, usage, audit |
+| Worker | `/v1/worker`, `/v1/internal` | registration, heartbeat, job lease/complete/ack |
+
+## Errors
+
+Errors are JSON objects:
+
+```json
+{
+  "error": {
+    "code": "forbidden",
+    "message": "forbidden"
+  }
+}
+```
+
+Use HTTP status plus `error.code`; do not parse human message text for control flow.

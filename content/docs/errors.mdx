@@ -1,0 +1,32 @@
+---
+title: Errors and status codes
+description: Shared error response contract.
+---
+
+# Errors and status codes
+
+All failures return JSON:
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "invalid request"
+  }
+}
+```
+
+## Common codes
+
+| HTTP | Code | Meaning |
+| --- | --- | --- |
+| 400 | `invalid_request` | malformed JSON, invalid team slug, unsupported state |
+| 401 | `unauthorized` | missing/expired bearer token or admin credential |
+| 403 | `forbidden` | authenticated user lacks owner/admin role for target org/team |
+| 404 | `not_found` | target resource does not exist |
+| 409 | `conflict` | resource conflict or duplicate state |
+| 410 | `expired` | login or magic link expired |
+| 428 | `authorization_pending` | device login not approved yet |
+| 503 | `email_unavailable` | production invite email delivery is not configured or failed |
+
+Clients should branch on status plus `error.code`.

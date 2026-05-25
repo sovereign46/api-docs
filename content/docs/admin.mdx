@@ -1,0 +1,85 @@
+---
+title: Admin API
+description: Organization, team, people, model, job, schedule, usage, and audit routes.
+---
+
+# Admin API
+
+Admin routes require a bearer token whose user has `owner` or `admin` role in the target organization/team. `S46_ADMIN_TOKEN` is reserved for operator automation and must not be embedded in browser code.
+
+## Organizations
+
+- `GET /v1/admin/organizations`
+- `POST /v1/admin/organizations`
+- `GET /v1/admin/organizations/{slug}`
+- `PUT /v1/admin/organizations/{slug}`
+- `GET /v1/admin/organization-members?organization={slug}`
+- `POST /v1/admin/organization-members`
+- `GET /v1/admin/organization-roles`
+
+Organization member roles are `owner`, `admin`, `member`, `viewer`.
+
+## Teams
+
+- `GET /v1/admin/teams`
+- `POST /v1/admin/teams`
+- `GET /v1/admin/teams/{team}`
+- `PUT /v1/admin/teams/{team}`
+
+Use URL-escaped team ids in paths: `@s46/engineering` becomes `%40s46%2Fengineering`.
+
+Team payloads include `organizationSlug`, `slug`, `displayName`, `endpoint`, `region`, `mode`, `workerHosts`, `defaultModel`, `models`, and count/spend summaries when available.
+
+## People and invitations
+
+- `GET /v1/admin/people?organization={slug}`
+- `GET /v1/admin/people/{email}?organization={slug}`
+- `PATCH /v1/admin/people/{email}?organization={slug}`
+- `POST /v1/admin/people/invite`
+- `POST /v1/admin/people/{email}/teams`
+- `DELETE /v1/admin/people/{email}/teams/{team}`
+- `POST /v1/admin/people/{email}/devices/{deviceId}/revoke?organization={slug}`
+- `POST /v1/admin/people/{email}/invites/{inviteId}/resend?organization={slug}`
+- `GET /v1/admin/people/{email}/audit?organization={slug}`
+
+Invite body:
+
+```json
+{
+  "email": "new-admin@example.com",
+  "team": "@s46/engineering",
+  "role": "admin"
+}
+```
+
+## Models
+
+- `GET /v1/admin/models`
+- `POST /v1/admin/models`
+
+Catalog entries expose stable model ids, display names, provider, region, capability tags, context window, output limit, costs, backend model, digest, and status.
+
+## Workers and jobs
+
+- `GET /v1/admin/workers?team={team}`
+- `GET /v1/admin/workers/{id}`
+- `GET /v1/admin/workers/{id}/logs`
+- `POST /v1/admin/workers/{id}/drain`
+- `POST /v1/admin/workers/{id}/revoke`
+- `GET /v1/admin/jobs?team={team}`
+- `POST /v1/admin/jobs`
+- `GET /v1/admin/jobs/{id}`
+- `POST /v1/admin/jobs/{id}/cancel`
+- `POST /v1/admin/jobs/{id}/retry`
+- `GET /v1/admin/jobs/{id}/logs`
+
+Jobs carry actor, repository, branch, sandbox exception, max runtime, max cost, current cost, worker, and lease fields.
+
+## Schedules, usage, audit
+
+- `GET /v1/admin/schedules?team={team}`
+- `POST /v1/admin/schedules`
+- `GET /v1/admin/usage?team={team}`
+- `GET /v1/admin/audit?team={team}&limit=100`
+
+These routes are live API routes even if parts of the product UI remain coming soon.

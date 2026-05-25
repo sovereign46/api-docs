@@ -107,11 +107,6 @@ body::before {
   -webkit-mask-image: linear-gradient(135deg, transparent 0%, transparent 24%, black 68%, black 100%);
 }
 
-body > *:not(script) {
-  position: relative;
-  z-index: 1;
-}
-
 ::selection {
   background: var(--signal);
   color: var(--color-fd-primary-foreground);
@@ -204,6 +199,15 @@ body > *:not(script) {
   border-radius: 0;
   box-shadow: inset 3px 0 0 var(--signal);
   font-weight: 600;
+}
+
+#nd-sidebar div:has(> [data-theme-toggle]) {
+  width: fit-content;
+  margin-inline-start: auto;
+}
+
+#nd-sidebar [data-theme-toggle] {
+  margin-inline-start: 0;
 }
 
 #nd-sidebar a,

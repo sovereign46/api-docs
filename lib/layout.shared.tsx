@@ -17,11 +17,5 @@ export function baseOptions(): BaseLayoutProps {
       title: <S46Wordmark />,
       url: '/docs',
     },
-    links: [
-      { text: 'Admin', url: 'https://admin.s46.dev' },
-      { text: 'CLI', url: 'https://github.com/sovereign46/s46' },
-      { text: 'Status', url: 'https://api.s46.dev/healthz' },
-      { text: 'LLM index', url: '/llms.txt' },
-    ],
   };
 }

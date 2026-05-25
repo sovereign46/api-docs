@@ -16,8 +16,7 @@
   --shadow-dither: radial-gradient(circle at 1px 1px, var(--rule-strong) 0 1px, transparent 1.1px);
   --hash-strip: repeating-linear-gradient(90deg, var(--rule-strong) 0 1px, transparent 1px 6px);
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --sans: "Diatype", "ABC Diatype", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --serif: "Newsreader", "Times New Roman", serif;
+  --sans: "Diatype", "ABC Diatype", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 
   --color-fd-background: var(--paper);
   --color-fd-foreground: var(--ink);
@@ -90,8 +89,10 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 16px;
+  font-size: 15px;
+  line-height: 1.5;
   letter-spacing: -0.005em;
+  font-synthesis: none;
 }
 
 body::before {
@@ -151,7 +152,7 @@ body::before {
 
 .s46-wordmark__name {
   font-family: var(--mono);
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -204,10 +205,40 @@ body::before {
 #nd-sidebar div:has(> [data-theme-toggle]) {
   width: fit-content;
   margin-inline-start: auto;
+  padding: 3px;
+  border-color: var(--rule-strong);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--paper) 78%, var(--rule));
+  box-shadow: 3px 3px 0 0 var(--rule);
+  transition-property: background-color, box-shadow;
+  transition-duration: 120ms;
 }
 
 #nd-sidebar [data-theme-toggle] {
+  display: grid;
+  grid-template-columns: repeat(2, 28px);
+  gap: 3px;
+  width: auto;
+  height: 28px;
   margin-inline-start: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  transition-property: none;
+}
+
+#nd-sidebar [data-theme-toggle] > svg {
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border-radius: 0 !important;
+  transition-property: background-color, color, transform;
+  transition-duration: 120ms;
+}
+
+#nd-sidebar [data-theme-toggle] > svg[class*="bg-fd-accent"] {
+  background: var(--signal-soft);
+  color: var(--ink);
 }
 
 #nd-sidebar a,
@@ -220,9 +251,14 @@ body::before {
   color: var(--steel);
 }
 
-#nd-page article {
-  font-size: 16px;
-  line-height: 1.72;
+#nd-page {
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+#nd-page .prose {
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 #nd-page h1,
@@ -262,17 +298,56 @@ body::before {
   background: color-mix(in oklab, var(--signal) 6%, var(--paper));
   color: var(--ink);
   font-family: var(--mono);
+  font-feature-settings: "ss01", "cv11";
   font-size: 0.92em;
+}
+
+#nd-page figure.shiki {
+  border-color: var(--rule-strong);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--paper) 92%, transparent), color-mix(in oklab, var(--paper) 84%, var(--rule))),
+    var(--paper);
+  box-shadow: 8px 8px 0 0 var(--rule);
+  transition-property: none;
+}
+
+#nd-page figure.shiki > div:first-child,
+#nd-page figure.shiki button {
+  border-radius: 0;
+}
+
+#nd-page figure.shiki button {
+  transition-property: background-color, color, transform;
+}
+
+#nd-page figure.shiki button:active {
+  transform: scale(0.96);
 }
 
 #nd-page pre {
   border: 1px solid var(--rule-strong);
   border-radius: 0;
   box-shadow: 8px 8px 0 0 var(--rule);
+  font-family: var(--mono);
+  font-feature-settings: "ss01", "cv11";
+}
+
+#nd-page figure.shiki pre {
+  border: 0;
+  box-shadow: none;
 }
 
 #nd-page table {
+  border-color: var(--rule-strong);
+  border-radius: 0;
   font-size: 14px;
+  transition-property: none;
+}
+
+#nd-page table th,
+#nd-page table td {
+  border-radius: 0;
 }
 
 #nd-page th {
@@ -286,6 +361,28 @@ body::before {
 
 #nd-page td code {
   font-variant-numeric: tabular-nums;
+}
+
+#nd-page > div[class*="@container"] > a {
+  border-color: var(--rule-strong);
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, var(--signal-tint), color-mix(in oklab, var(--paper) 88%, var(--rule))),
+    var(--paper);
+  box-shadow: 6px 6px 0 0 var(--rule);
+  transition-property: background-color, color, box-shadow, transform;
+  transition-duration: 120ms;
+}
+
+#nd-page > div[class*="@container"] > a:hover {
+  background: var(--signal-soft);
+  box-shadow: 8px 8px 0 0 var(--rule-strong);
+  transform: translate(-1px, -1px);
+}
+
+#nd-page > div[class*="@container"] > a:active {
+  box-shadow: 4px 4px 0 0 var(--rule);
+  transform: translate(0, 0) scale(0.96);
 }
 
 button,

@@ -87,6 +87,24 @@ Approved login returns tokens:
 
 Browser clients that send `X-S46-Use-Cookies: true` receive auth cookies and a redacted token set in the JSON body.
 
+## Passkeys
+
+Passkey registration requires an authenticated bearer token. The start endpoint returns WebAuthn creation options; send the browser credential response to finish.
+
+- `POST /v1/auth/passkeys/register/start`
+- `POST /v1/auth/passkeys/register/finish`
+
+Passkey login is email-scoped. Start returns WebAuthn request options; finish returns the same token-set shape as device polling.
+
+- `POST /v1/auth/passkeys/login/start`
+- `POST /v1/auth/passkeys/login/finish`
+
+Login start body:
+
+```json
+{ "email": "dscape@s46.dev" }
+```
+
 ## Refresh
 
 `POST /v1/auth/token/refresh`

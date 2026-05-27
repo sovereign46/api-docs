@@ -27,7 +27,7 @@ Requires `Authorization: Bearer <admin token or owner/admin user token>` scoped 
   "protocol": "sse",
   "capabilities": ["vm_boundary", "pi"],
   "capacity": { "slots": 2, "maxConcurrent": 1 },
-  "models": ["s46/kimi-k2.6"]
+  "models": ["s46/devstral-small-2-24b"]
 }
 ```
 
@@ -50,7 +50,7 @@ Response `201 Created`:
     "state": "ready",
     "capabilities": ["vm_boundary", "pi"],
     "capacity": { "slots": 2, "maxConcurrent": 1 },
-    "models": ["s46/kimi-k2.6"],
+    "models": ["s46/devstral-small-2-24b"],
     "createdAt": "2030-01-01T12:00:00Z",
     "updatedAt": "2030-01-01T12:00:00Z"
   },
@@ -70,8 +70,8 @@ Store the returned token securely; it is required for heartbeat, lease, and comp
   "heartbeat": {
     "state": "ready",
     "capacity": { "slots": 2, "maxConcurrent": 1, "inUse": 0 },
-    "models": ["s46/kimi-k2.6"],
-    "modelDetails": [{ "id": "s46/kimi-k2.6", "ready": true, "state": "ready" }]
+    "models": ["s46/devstral-small-2-24b"],
+    "modelDetails": [{ "id": "s46/devstral-small-2-24b", "ready": true, "state": "ready" }]
   }
 }
 ```
@@ -120,7 +120,7 @@ Response `200 OK` when work is available:
     "priority": 0,
     "region": "EU-OPO",
     "harness": "pi",
-    "model": "s46/kimi-k2.6",
+    "model": "s46/devstral-small-2-24b",
     "workerId": "worker_01",
     "leaseId": "lease_01",
     "payload": {}

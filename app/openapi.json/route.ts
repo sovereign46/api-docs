@@ -154,6 +154,56 @@ const openapi = {
         },
       },
     },
+    '/v1/auth/passkeys/register/start': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Start passkey registration for the authenticated user',
+        operationId: 'startPasskeyRegistration',
+        security: bearerSecurity,
+        requestBody: requestBody(ref('EmptyObject')),
+        responses: {
+          '200': response('WebAuthn registration options', ref('WebAuthnOptions')),
+          ...errorResponses,
+        },
+      },
+    },
+    '/v1/auth/passkeys/register/finish': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Finish passkey registration',
+        operationId: 'finishPasskeyRegistration',
+        security: bearerSecurity,
+        requestBody: requestBody(ref('WebAuthnRegistrationResponse')),
+        responses: {
+          '200': response('Passkey registered', ref('PasskeyRegistrationResult')),
+          ...errorResponses,
+        },
+      },
+    },
+    '/v1/auth/passkeys/login/start': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Start passkey login',
+        operationId: 'startPasskeyLogin',
+        requestBody: requestBody(ref('PasskeyLoginStartRequest')),
+        responses: {
+          '200': response('WebAuthn authentication options', ref('WebAuthnOptions')),
+          ...errorResponses,
+        },
+      },
+    },
+    '/v1/auth/passkeys/login/finish': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Finish passkey login',
+        operationId: 'finishPasskeyLogin',
+        requestBody: requestBody(ref('WebAuthnAuthenticationResponse')),
+        responses: {
+          '200': response('Approved token set', ref('TokenSet')),
+          ...errorResponses,
+        },
+      },
+    },
     '/v1/auth/logout': {
       post: {
         tags: ['Auth'],
@@ -422,6 +472,7 @@ const openapi = {
         tags: ['Internal'],
         summary: 'Acknowledge a lease internally',
         operationId: 'ackLease',
+        security: bearerSecurity,
         requestBody: requestBody(ref('LeaseAckRequest')),
         responses: {
           '202': response('Acknowledged', ref('AcknowledgedResponse')),
@@ -539,6 +590,7 @@ function buildSchemas() {
         },
       },
     },
+    EmptyObject: { type: 'object', additionalProperties: false },
     OKResponse: { type: 'object', properties: { ok: { type: 'boolean' } } },
     RemovedResponse: { type: 'object', properties: { removed: { type: 'boolean' } } },
     DeletedTeamResponse: { type: 'object', properties: { deleted: { type: 'boolean' }, team: { type: 'string' } } },
@@ -568,6 +620,11 @@ function buildSchemas() {
     DeviceLoginPollRequest: { type: 'object', required: ['deviceCode'], properties: { deviceCode: { type: 'string' } } },
     MagicLinkConsumeRequest: { type: 'object', required: ['token'], properties: { token: { type: 'string' } } },
     RefreshTokenRequest: { type: 'object', properties: { refreshToken: { type: 'string' }, account: { type: 'string', format: 'email' } } },
+    PasskeyLoginStartRequest: { type: 'object', required: ['email'], properties: { email: { type: 'string', format: 'email' } } },
+    WebAuthnOptions: { type: 'object', additionalProperties: true },
+    WebAuthnRegistrationResponse: { type: 'object', additionalProperties: true },
+    WebAuthnAuthenticationResponse: { type: 'object', additionalProperties: true },
+    PasskeyRegistrationResult: { type: 'object', properties: { ok: { type: 'boolean' }, credential: { type: 'object', additionalProperties: true } } },
     TokenSet: {
       type: 'object',
       required: ['account', 'deviceId', 'accessToken', 'refreshToken', 'expiresAt'],

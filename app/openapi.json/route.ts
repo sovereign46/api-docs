@@ -39,6 +39,23 @@ function collection(name: string, schema: unknown) {
   };
 }
 
+function paginatedCollection(name: string, schema: unknown) {
+  return {
+    type: 'object',
+    required: [name],
+    properties: {
+      [name]: {
+        type: 'array',
+        items: schema,
+      },
+      nextPageToken: {
+        type: 'string',
+        description: 'Token to pass as pageToken on the next request when more results are available.',
+      },
+    },
+  };
+}
+
 function pathParam(name: string, description: string, example?: string) {
   return {
     name,
@@ -60,13 +77,33 @@ function queryParam(name: string, description: string, required = false) {
   };
 }
 
+function headerParam(name: string, description: string, required = false) {
+  return {
+    name,
+    in: 'header',
+    required,
+    description,
+    schema: { type: 'string' },
+  };
+}
+
 const errorResponses = {
   '400': response('Invalid request', ref('ErrorResponse')),
   '401': response('Unauthorized', ref('ErrorResponse')),
   '403': response('Forbidden', ref('ErrorResponse')),
   '404': response('Not found', ref('ErrorResponse')),
-  '428': response('Polling target is not ready', ref('ErrorResponse')),
+  '409': response('Conflict', ref('ErrorResponse')),
+  '429': response('Rate limited', ref('ErrorResponse')),
   '500': response('Internal error', ref('ErrorResponse')),
+};
+
+const authorizationPendingResponse = {
+  '428': response('Authorization pending', ref('ErrorResponse')),
+};
+
+const preconditionResponses = {
+  '412': response('Precondition failed', ref('ErrorResponse')),
+  '428': response('Precondition required', ref('ErrorResponse')),
 };
 
 const openapi = {
@@ -111,6 +148,7 @@ const openapi = {
         responses: {
           '200': response('Approved token set', ref('TokenSet')),
           ...errorResponses,
+          ...authorizationPendingResponse,
         },
       },
     },
@@ -286,7 +324,7 @@ const openapi = {
     },
     '/v1/sessions/{sessionId}/detach': sessionAction('detach', ref('DetachRequest'), ref('Session')),
     '/v1/sessions/{sessionId}/resume': sessionAction('resume', ref('ResumeRequest'), ref('Session')),
-    '/v1/sessions/{sessionId}/attach': sessionAction('attach', ref('AttachRequest'), ref('AttachResult')),
+    '/v1/sessions/{sessionId}/attach': sessionAction('attach', ref('AttachRequest'), ref('AttachResult'), authorizationPendingResponse),
     '/v1/sessions/{sessionId}/land': sessionAction('land', ref('LandRequest'), ref('LandResult')),
     '/v1/admin/overview': {
       get: adminGet('Admin overview', 'adminOverview', ref('Overview'), [queryParam('organization', 'Organization slug'), queryParam('team', 'Canonical team id')]),
@@ -366,6 +404,28 @@ const openapi = {
       get: adminGet('List models', 'listModels', collection('models', ref('ModelCatalogEntry'))),
       post: adminWrite('Create model catalog entry', 'createModel', ref('ModelCatalogEntry'), ref('ModelCatalogEntry')),
       put: adminWrite('Update model catalog entry', 'putModel', ref('ModelCatalogEntry'), ref('ModelCatalogEntry')),
+    },
+    '/v1/admin/model-releases': {
+      get: adminGet('List model releases', 'listModelReleases', paginatedCollection('modelReleases', ref('ModelRelease')), [queryParam('namespace', 'Slash-free namespace, for example s46 or acme.platform'), queryParam('modelSlug', 'Model slug'), queryParam('state', 'Release state'), queryParam('team', 'Team namespace slug'), queryParam('yanked', 'Filter yanked/yanking releases'), queryParam('createdAfter', 'Only include releases created after this ISO 8601 timestamp'), queryParam('publishedAfter', 'Only include releases published after this ISO 8601 timestamp'), queryParam('limit', 'Maximum releases'), queryParam('pageToken', 'Cursor token from the previous list response')]),
+      post: adminWrite('Create model release', 'createModelRelease', ref('CreateModelReleaseRequest'), ref('ModelRelease'), '201'),
+    },
+    '/v1/admin/model-releases/{releaseId}': {
+      get: adminGet('Get model release', 'getModelRelease', ref('ModelRelease'), [pathParam('releaseId', 'Opaque release id', 'rel_abc')]),
+    },
+    '/v1/admin/model-releases/{releaseId}/upload-session': {
+      post: adminWrite('Create model upload session', 'createModelUploadSession', ref('ModelUploadSessionRequest'), ref('ModelUploadSessionResponse'), '201', [pathParam('releaseId', 'Opaque release id', 'rel_abc'), headerParam('If-Match', 'Release ETag/revision', true)], preconditionResponses),
+    },
+    '/v1/admin/model-releases/{releaseId}/finalize-upload': {
+      post: adminWrite('Finalize model upload', 'finalizeModelUpload', ref('FinalizeModelUploadRequest'), ref('ModelRelease'), '200', [pathParam('releaseId', 'Opaque release id', 'rel_abc'), headerParam('If-Match', 'Release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)], preconditionResponses),
+    },
+    '/v1/admin/model-releases/{releaseId}/validate': {
+      post: adminWrite('Queue server-side model validation', 'validateModelRelease', ref('ModelValidationRequest'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Opaque release id', 'rel_abc'), headerParam('If-Match', 'Release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)], preconditionResponses),
+    },
+    '/v1/admin/model-releases/{releaseId}/publish': {
+      post: adminWrite('Queue certified model publish', 'publishModelRelease', ref('EmptyObject'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Opaque release id', 'rel_abc'), headerParam('If-Match', 'Release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)], preconditionResponses),
+    },
+    '/v1/admin/model-releases/{releaseId}/yank': {
+      post: adminWrite('Yank model release and block serving immediately', 'yankModelRelease', ref('ModelYankRequest'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Opaque release id', 'rel_abc'), headerParam('If-Match', 'Release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)], preconditionResponses),
     },
     '/v1/admin/teams': {
       get: adminGet('List teams', 'listAdminTeams', collection('teams', ref('Team')), [queryParam('team', 'Canonical team id')]),
@@ -462,7 +522,7 @@ const openapi = {
       post: workerWrite('Heartbeat worker', 'heartbeatWorker', ref('WorkerHeartbeatEnvelope'), ref('Worker')),
     },
     '/v1/worker/jobs/lease': {
-      post: workerWrite('Lease a job', 'leaseJob', ref('LeaseRequest'), ref('LeaseResult')),
+      post: workerWrite('Lease a job', 'leaseJob', ref('LeaseRequest'), ref('LeaseResult'), authorizationPendingResponse),
     },
     '/v1/worker/jobs/complete': {
       post: workerWrite('Complete a job lease', 'completeJob', ref('CompleteJobRequest'), ref('Job')),
@@ -492,7 +552,7 @@ const openapi = {
   },
 };
 
-function sessionAction(action: string, input: unknown, output: unknown) {
+function sessionAction(action: string, input: unknown, output: unknown, extraResponses = {}) {
   return {
     post: {
       tags: ['CLI'],
@@ -504,6 +564,7 @@ function sessionAction(action: string, input: unknown, output: unknown) {
       responses: {
         '200': response('Session action result', output),
         ...errorResponses,
+        ...extraResponses,
       },
     },
   };
@@ -523,7 +584,7 @@ function adminGet(summary: string, operationId: string, output: unknown, paramet
   };
 }
 
-function adminWrite(summary: string, operationId: string, input: unknown, output: unknown, success = '200', parameters: unknown[] = []) {
+function adminWrite(summary: string, operationId: string, input: unknown, output: unknown, success = '200', parameters: unknown[] = [], extraResponses = {}) {
   return {
     tags: ['Admin'],
     summary,
@@ -534,11 +595,12 @@ function adminWrite(summary: string, operationId: string, input: unknown, output
     responses: {
       [success]: response(summary, output),
       ...errorResponses,
+      ...extraResponses,
     },
   };
 }
 
-function workerWrite(summary: string, operationId: string, input: unknown, output: unknown) {
+function workerWrite(summary: string, operationId: string, input: unknown, output: unknown, extraResponses = {}) {
   return {
     tags: ['Worker'],
     summary,
@@ -548,6 +610,7 @@ function workerWrite(summary: string, operationId: string, input: unknown, outpu
     responses: {
       '200': response(summary, output),
       ...errorResponses,
+      ...extraResponses,
     },
   };
 }
@@ -818,6 +881,64 @@ function buildSchemas() {
         updatedAt: timestamp,
       },
     },
+    CreateModelReleaseRequest: { type: 'object', required: ['namespace', 'modelSlug'], properties: { namespace: { type: 'string', examples: ['s46', 'acme.platform'] }, modelSlug: { type: 'string', examples: ['devstral-q4'] } } },
+    ModelUploadSessionRequest: { type: 'object', required: ['artifact'], properties: { artifact: ref('ModelUploadArtifactRequest') } },
+    ModelUploadArtifactRequest: { type: 'object', required: ['sha256', 'size'], properties: { sha256: { type: 'string' }, size: { type: 'integer' }, contentType: { type: 'string' }, partCount: { type: 'integer' } } },
+    FinalizeModelUploadRequest: { type: 'object', required: ['sha256', 'size'], properties: { uploadSessionId: { type: 'string' }, sha256: { type: 'string' }, size: { type: 'integer' } } },
+    ModelValidationRequest: { type: 'object', properties: { estimatedGpuHours: { type: 'integer' } } },
+    ModelYankRequest: { type: 'object', properties: { reason: { type: 'string' } } },
+    ModelUploadSessionResponse: { type: 'object', properties: { uploadSession: ref('ModelUploadSession'), modelRelease: ref('ModelRelease') } },
+    ModelUploadSession: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        releaseId: { type: 'string' },
+        namespace: { type: 'string' },
+        modelSlug: { type: 'string' },
+        artifactDigest: { type: 'string' },
+        artifactSize: { type: 'integer' },
+        uploadUrl: { type: 'string' },
+        method: { type: 'string' },
+        headers: { type: 'object', additionalProperties: { type: 'string' } },
+        state: { type: 'string' },
+        expiresAt: timestamp,
+        createdAt: timestamp,
+        finalizedAt: timestamp,
+      },
+    },
+    ModelRelease: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        schema: { type: 'string' },
+        namespace: { type: 'string' },
+        organizationSlug: { type: 'string' },
+        teamSlug: { type: 'string' },
+        modelSlug: { type: 'string' },
+        modelId: { type: 'string' },
+        version: { type: 'string' },
+        state: { type: 'string', enum: ['staged', 'validating', 'validated', 'publishing', 'published', 'yanking', 'yanked', 'failed'] },
+        backendModel: { type: 'string' },
+        artifact: ref('ModelArtifact'),
+        certification: ref('ModelCertificationRecord'),
+        yank: ref('ModelYankRecord'),
+        servingBlocked: { type: 'boolean' },
+        validationQueuedAt: timestamp,
+        publishQueuedAt: timestamp,
+        yankRequestedAt: timestamp,
+        estimatedGpuHours: { type: 'integer' },
+        createdBy: { type: 'string' },
+        updatedBy: { type: 'string' },
+        revision: { type: 'integer' },
+        etag: { type: 'string' },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    },
+    ModelArtifact: { type: 'object', properties: { digest: { type: 'string' }, sha256: { type: 'string' }, size: { type: 'integer' }, contentType: { type: 'string' }, quantization: { type: 'string' }, storageUri: { type: 'string' }, uploadedAt: timestamp } },
+    ModelCertificationRecord: { type: 'object', properties: { schema: { type: 'string' }, releaseId: { type: 'string' }, modelId: { type: 'string' }, version: { type: 'string' }, artifactDigest: { type: 'string' }, artifactSize: { type: 'integer' }, backendModel: { type: 'string' }, verificationSuite: ref('VerificationSuite'), evidenceDigests: { type: 'array', items: { type: 'string' } }, result: { type: 'string' }, signatureDigest: { type: 'string' }, sigsum: stringMap, createdAt: timestamp } },
+    VerificationSuite: { type: 'object', properties: { version: { type: 'string' }, runnerImageDigest: { type: 'string' }, policyDigest: { type: 'string' } } },
+    ModelYankRecord: { type: 'object', properties: { schema: { type: 'string' }, releaseId: { type: 'string' }, modelId: { type: 'string' }, version: { type: 'string' }, artifactDigest: { type: 'string' }, releaseCertificateDigest: { type: 'string' }, reason: { type: 'string' }, effectiveAt: timestamp, loggedAt: timestamp } },
     Overview: {
       type: 'object',
       properties: {

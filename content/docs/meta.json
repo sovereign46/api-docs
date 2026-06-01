@@ -1,4 +1,4 @@
 {
   "title": "s46 API",
-  "pages": ["index", "auth", "cli", "admin", "workers", "errors"]
+  "pages": ["index", "auth", "cli", "admin", "models", "workers", "errors"]
 }

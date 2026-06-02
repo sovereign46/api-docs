@@ -1,0 +1,209 @@
+---
+title: Harness gateway
+description: OpenAI, Anthropic, Codex, model discovery, streaming, and airplane-mode local workers.
+---
+
+Use the gateway endpoint returned by `GET /v1/teams/{team}`. Production default:
+
+```txt
+https://gateway.s46.dev
+```
+
+In production, model POST routes require a valid s46 bearer token. The gateway uses that token to resolve the caller's team, choose the team default model when `model` is omitted, and enforce model policy.
+
+## Route inventory
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/models` | OpenAI-style model list. |
+| `POST` | `/v1/responses` | OpenAI Responses-compatible request. |
+| `POST` | `/v1/chat/completions` | OpenAI Chat Completions-compatible request. |
+| `GET` | `/anthropic/v1/models` | Anthropic-style model list. |
+| `POST` | `/anthropic/v1/messages` | Anthropic Messages-compatible request. |
+| `GET` | `/codex/v1/models` | Codex/OpenAI-style model list. |
+| `POST` | `/codex/v1/responses` | Codex Responses-compatible request. |
+| `GET` | `/v1/workers` | Airplane-mode local worker discovery. |
+| `GET` | `/v1/workers/{id}` | Airplane-mode local worker details. Current id: `local-llamacpp`. |
+
+The gateway also exposes `GET /healthz`, `GET /readyz`, and `GET /debug/vars`; see [Operations](/docs/operations).
+
+The implementation proxies arbitrary POST routes under `/anthropic/` and `/codex/`, but consumers should use the vendor-compatible paths above unless they intentionally need a provider-specific sub-route.
+
+## Authentication
+
+Production model POST requests send:
+
+```txt
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+Accept: application/json
+```
+
+Development and airplane-mode deployments may allow anonymous local/mock responses. Do not rely on anonymous model calls in production.
+
+## Model discovery
+
+### OpenAI/Codex shape
+
+`GET /v1/models` and `GET /codex/v1/models` return:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "s46/devstral-small-2-24b",
+      "object": "model",
+      "created": 1893456000,
+      "owned_by": "sovereign46",
+      "metadata": {
+        "displayName": "Devstral Small 2 24B",
+        "certified": true,
+        "published": true,
+        "verificationState": "trusted"
+      }
+    }
+  ]
+}
+```
+
+### Anthropic shape
+
+`GET /anthropic/v1/models` returns:
+
+```json
+{
+  "data": [
+    {
+      "id": "s46/devstral-small-2-24b",
+      "type": "model",
+      "display_name": "Devstral Small 2 24B"
+    }
+  ],
+  "has_more": false
+}
+```
+
+## OpenAI Responses
+
+`POST /v1/responses`
+
+```json
+{
+  "model": "s46/devstral-small-2-24b",
+  "input": "Write a short status update.",
+  "stream": false
+}
+```
+
+Streaming requests set `"stream": true` and receive `text/event-stream` chunks following the OpenAI Responses event style.
+
+## OpenAI Chat Completions
+
+`POST /v1/chat/completions`
+
+```json
+{
+  "model": "s46/devstral-small-2-24b",
+  "messages": [
+    { "role": "user", "content": "Write a short status update." }
+  ],
+  "stream": true
+}
+```
+
+Streaming responses are OpenAI chat-completion chunks and end with `[DONE]`.
+
+## Anthropic Messages
+
+`POST /anthropic/v1/messages`
+
+```json
+{
+  "model": "s46/devstral-small-2-24b",
+  "max_tokens": 512,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Write a short status update." }
+      ]
+    }
+  ],
+  "stream": true
+}
+```
+
+The local llama.cpp adapter supports Anthropic `tools`, `tool_choice`, `tool_use`, and `tool_result` shapes by normalizing them through an internal OpenAI-compatible tool-call representation.
+
+## Codex Responses
+
+`POST /codex/v1/responses`
+
+```json
+{
+  "model": "s46/devstral-small-2-24b",
+  "input": "Explain this diff.",
+  "stream": true
+}
+```
+
+Codex routes use OpenAI Responses-compatible request/response shapes.
+
+## Policy and availability failures
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| `403` | `model_not_allowed` | The requested model is not certified/allowed for the caller's team. |
+| `429` | `rate_limited` | Per-IP stream/request rate limit exceeded. |
+| `503` | `model_unavailable` | The model is allowed but no upstream/local serving path is available. |
+
+The default model is resolved from the caller's team when `model` is omitted in production.
+
+## Airplane-mode worker discovery
+
+`GET /v1/workers`
+
+```json
+{
+  "workers": [
+    {
+      "id": "local-llamacpp",
+      "mode": "airplane",
+      "kind": "local",
+      "protocol": "openai-compatible",
+      "state": "ready",
+      "models": [
+        {
+          "id": "s46/devstral-small-2-24b",
+          "backendModel": "devstral-small-2:24b-instruct-2512-q4_K_M",
+          "state": "ready"
+        }
+      ],
+      "capabilities": ["chat", "code", "streaming", "tools"]
+    }
+  ]
+}
+```
+
+`GET /v1/workers/local-llamacpp` returns the worker object directly.
+
+Local worker states can be `not_configured`, `unavailable`, `unhealthy`, `model_missing`, or `ready`. Local model states can be `not_configured`, `unavailable`, `unknown`, `missing`, or `ready`.
+
+Local llama.cpp defaults:
+
+| s46 model | Backend alias |
+| --- | --- |
+| `s46/devstral-small-2-24b` | `devstral-small-2:24b-instruct-2512-q4_K_M` |
+
+When local llama.cpp is configured, requests using the s46 model id are rewritten to the backend alias and proxied to `llama-server`; max-token limits are clamped to local configuration.
+
+## Upstream proxy behavior
+
+When upstream URLs are configured, the gateway proxies compatible requests without forwarding the caller's `Authorization` header or cookies. If `S46_UPSTREAM_BEARER_TOKEN` is set, the gateway sends that token upstream.
+
+| Gateway route group | Upstream setting | Prefix behavior |
+| --- | --- | --- |
+| `/v1/*` | `S46_OPENAI_UPSTREAM_URL` | Preserves `/v1/*`. |
+| `/anthropic/*` | `S46_ANTHROPIC_UPSTREAM_URL` | Strips `/anthropic` before forwarding, after local-model handling. |
+| `/codex/*` | `S46_CODEX_UPSTREAM_URL` | Strips `/codex` before forwarding. |

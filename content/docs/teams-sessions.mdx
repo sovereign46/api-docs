@@ -1,0 +1,165 @@
+---
+title: Teams and sessions
+description: Team metadata, session listing, session actions, and session streams.
+---
+
+These routes are for consumers that need to discover how a team should run work and then operate sessions for that team.
+
+## Route inventory
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/teams/{team}` | Resolve team metadata and harness gateway configuration. |
+| `GET` | `/v1/sessions?team={team}` | List sessions for a team. |
+| `POST` | `/v1/sessions/{sessionId}/detach?team={team}` | Detach a local/active session into control-plane state. |
+| `POST` | `/v1/sessions/{sessionId}/resume?team={team}` | Resume a session remotely or materialize it locally. |
+| `POST` | `/v1/sessions/{sessionId}/attach?team={team}` | Return attach transport metadata once available. |
+| `GET` | `/v1/sessions/{sessionId}/stream?team={team}` | Stream remote-session handoff events as SSE. |
+| `POST` | `/v1/sessions/{sessionId}/land?team={team}` | Queue policy-gated landing/review work. |
+
+`{team}` and `{sessionId}` must be escaped. A session id may contain `/`, for example `@dscape/auth-redirect-fix` -> `%40dscape%2Fauth-redirect-fix`.
+
+## Resolve team metadata
+
+`GET /v1/teams/{team}`
+
+Example:
+
+```txt
+GET /v1/teams/%40s46%2Fengineering
+```
+
+Optional development query parameters:
+
+| Parameter | Purpose |
+| --- | --- |
+| `endpoint` | Override the harness gateway endpoint. |
+| `region` | Override the scheduling region. |
+| `mode` | Override team mode, for example `cloud` or `airplane`. |
+| `defaultModel` | Override the default model. |
+
+Response:
+
+```json
+{
+  "name": "@s46/engineering",
+  "organizationSlug": "s46",
+  "slug": "engineering",
+  "endpoint": "https://gateway.s46.dev",
+  "region": "EU-OPO",
+  "mode": "cloud",
+  "workerHosts": [],
+  "defaultModel": "s46/devstral-small-2-24b",
+  "models": ["s46/devstral-small-2-24b"]
+}
+```
+
+Consumers should use the returned `endpoint`, `region`, `defaultModel`, and `models` instead of hard-coding production values.
+
+## List sessions
+
+`GET /v1/sessions?team={team}`
+
+```json
+{
+  "sessions": [
+    {
+      "id": "@dscape/auth-redirect-fix",
+      "state": "running",
+      "harness": "pi",
+      "location": "worker:worker_01",
+      "region": "EU-OPO",
+      "model": "s46/devstral-small-2-24b",
+      "age": "4m",
+      "spent": "€0.00",
+      "task": "Fix auth redirect"
+    }
+  ]
+}
+```
+
+Session payloads use `region`, not `lane`.
+
+## Detach
+
+`POST /v1/sessions/{sessionId}/detach?team={team}`
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "harness": "pi",
+  "team": { "name": "@s46/engineering" }
+}
+```
+
+Returns the updated session object. Detach is job-backed on the control plane.
+
+## Resume
+
+`POST /v1/sessions/{sessionId}/resume?team={team}`
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "target": "remote",
+  "session": { "id": "@dscape/auth-redirect-fix" },
+  "team": { "name": "@s46/engineering" }
+}
+```
+
+`target` defaults to `remote`. `target: "local"` asks the consumer to materialize locally when supported.
+
+## Attach and stream
+
+`POST /v1/sessions/{sessionId}/attach?team={team}` returns transport metadata when the remote session is attachable:
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "url": "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/stream?team=%40s46%2Fengineering",
+  "protocol": "sse"
+}
+```
+
+If the session is still queued, the API returns `428 authorization_pending`.
+
+`GET /v1/sessions/{sessionId}/stream?team={team}` is `text/event-stream` and emits session events. A current event shape is:
+
+```txt
+event: session
+data: {"id":"@dscape/auth-redirect-fix","state":"running","location":"worker:worker_01"}
+```
+
+## Land
+
+`POST /v1/sessions/{sessionId}/land?team={team}`
+
+```json
+{
+  "sessionId": "@dscape/auth-redirect-fix",
+  "title": "Fix auth redirect",
+  "session": { "id": "@dscape/auth-redirect-fix" },
+  "team": { "name": "@s46/engineering" }
+}
+```
+
+Response includes landing/review metadata:
+
+```json
+{
+  "id": "@dscape/auth-redirect-fix",
+  "title": "Fix auth redirect",
+  "branch": "dscape/auth-redirect-fix",
+  "ranOn": ["worker_01"],
+  "harness": "pi",
+  "model": "s46/devstral-small-2-24b",
+  "cost": "€0.00",
+  "status": "ready_for_review",
+  "pullRequestUrl": "https://github.com/sovereign46/app/pull/42",
+  "review": {
+    "summary": "Ready for review.",
+    "checklist": ["Tests pass", "Review changes"],
+    "suggestedCommands": ["npm test"]
+  }
+}
+```

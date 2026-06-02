@@ -1,0 +1,49 @@
+---
+title: Operations
+description: Health, readiness, diagnostics, and API-served support pages.
+---
+
+These routes are exposed by the control plane. The gateway also exposes the status routes.
+
+## Status checks
+
+| Method | Route | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/healthz` | none | Process liveness. |
+| `GET` | `/readyz` | none | Readiness. Reports database state when configured. |
+| `GET` | `/debug/vars` | admin | Go `expvar` counters, including model/upstream request counters. |
+
+`GET /healthz`:
+
+```json
+{ "status": "ok" }
+```
+
+`GET /readyz` with a database configured:
+
+```json
+{ "status": "ok", "database": "ok" }
+```
+
+`GET /readyz` without `S46_DATABASE_URL`:
+
+```json
+{ "status": "ok", "database": "disabled" }
+```
+
+If the configured database cannot be reached, `/readyz` returns `503`:
+
+```json
+{ "status": "unavailable", "database": "unavailable" }
+```
+
+`/debug/vars` requires admin authorization in production or whenever an admin token is configured. Use an owner/admin bearer token for application tooling; reserve `S46_ADMIN_TOKEN`/`X-S46-Admin-Token` for operator automation.
+
+## Browser support routes
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/assets/auth.css` | Stylesheet used by the API-rendered auth pages. |
+| `GET` | `/session` and `/session/` | Session handoff shell. It does not expose a share payload. |
+
+Consumers normally do not need these support pages. The JSON session stream used by clients is `GET /v1/sessions/{sessionId}/stream?team={team}` and is documented in [Teams and sessions](/docs/teams-sessions).

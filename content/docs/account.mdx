@@ -1,0 +1,61 @@
+---
+title: Account
+description: Current user and paired-device management.
+---
+
+Account routes require `Authorization: Bearer <accessToken>` or a valid `s46_access` auth cookie.
+
+## Account route inventory
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/me` | Return the authenticated user, organization, team, and role. |
+| `GET` | `/v1/devices` | List active paired devices for the account. |
+| `DELETE` | `/v1/devices/{deviceId}` | Revoke a paired device and its token family. |
+
+## Current user
+
+`GET /v1/me`
+
+```json
+{
+  "email": "dscape@s46.dev",
+  "organization": "s46",
+  "team": "@s46/engineering",
+  "role": "owner"
+}
+```
+
+Use this response to determine whether admin surfaces should be shown. `owner` and `admin` may call admin routes for their target org/team; `member` and `viewer` may not.
+
+## Paired devices
+
+`GET /v1/devices`
+
+```json
+{
+  "devices": [
+    {
+      "id": "dev-laptop",
+      "name": "Dev laptop",
+      "account": "dscape@s46.dev",
+      "organizationSlug": "s46",
+      "team": "@s46/engineering",
+      "createdAt": "2030-01-01T10:00:00Z",
+      "lastSeenAt": "2030-01-01T12:30:00Z",
+      "lastSeenIp": "203.0.113.10"
+    }
+  ]
+}
+```
+
+`DELETE /v1/devices/{deviceId}` revokes a device immediately:
+
+```json
+{
+  "revoked": true,
+  "deviceId": "dev-laptop"
+}
+```
+
+`deviceId` must be URL path-escaped. Deleting the current device invalidates the token family used for the request.

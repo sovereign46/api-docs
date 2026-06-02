@@ -1,341 +1,172 @@
 ---
-title: Certified model publishing
-description: Org artifact uploads, Sovereign46 server-side certification, Sigsum freshness, yanks, keys, and lifecycle API contract.
+title: Models
+description: Certified model catalog, team model policy, and serving rules.
 ---
 
-Status: implementation contract. The existing `/v1/admin/models` catalog remains operator-managed for legacy entries. The `/v1/admin/model-releases` lifecycle endpoints now exist for staging uploads and queuing validation/publish/yank work; final green certification and registry activation still require the S46 worker/publisher path described below.
+For a consumer, model integration has three steps:
 
-## Governing rule
+1. Read the team metadata from `GET /v1/teams/{team}` to get `endpoint`, `defaultModel`, and the team's model list.
+2. If the user is an admin, read `GET /v1/admin/models` and `GET /v1/admin/model-policies?team={team}` to display certified catalog and team policy.
+3. Send model requests to the [harness gateway](/docs/gateway), using the team `endpoint` and an allowed model id such as `s46/devstral-small-2-24b`.
 
-Org admins upload model artifacts and optional provenance. Sovereign46 certifies those artifacts server-side.
+The current `s46-api` exposes catalog and policy routes. It does not expose a public model-upload/publishing lifecycle; certification and global yanks come from the verified `models.s46.dev` registry mirror.
 
-There is no path where an org-held key vouches for verification. An org key may say "this artifact came from Acme". Only Sovereign46 certification keys may say "this artifact passed S46 verification".
+## Route inventory
 
-## Identity
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/admin/models?organization={slug}&team={team}` | List verified catalog entries. When `team` is provided, include team policy rows. |
+| `GET` | `/v1/admin/model-policies?team={team}` | List allow/default policies for a team. |
+| `PUT` | `/v1/admin/model-policies` | Set allow/default policy for one model. |
+| `PATCH` | `/v1/admin/model-policies` | Patch allow/default policy for one model. |
+| `GET` | `/v1/models` | Gateway OpenAI-style model discovery. See [Gateway](/docs/gateway). |
+| `GET` | `/anthropic/v1/models` | Gateway Anthropic-style model discovery. See [Gateway](/docs/gateway). |
+| `GET` | `/codex/v1/models` | Gateway Codex/OpenAI-style model discovery. See [Gateway](/docs/gateway). |
 
-Canonical model handles are slash-free:
+Admin model routes require owner/admin authorization for the target organization/team.
 
-```txt
-@org:model
-@org.team:model
-```
+## Read the catalog
 
-Examples:
-
-```txt
-@s46:devstral-small-2-24b
-@acme.platform:devstral-q4
-```
-
-Legacy slash IDs such as `s46/devstral-small-2-24b` remain aliases during migration only. New API endpoints do not put model IDs in URL paths; model identity is supplied in JSON bodies or query filters as `namespace` and `modelSlug`.
-
-`backendModel` is system-assigned. Clients never supply it on create. After successful certification and publish, S46 assigns:
-
-```txt
-s46://models/{namespace}/{modelSlug}/releases/{version}/artifacts/sha256:{digest}
-```
-
-The value points to the exact GGUF digest S46 verified. Quantization is stored as artifact metadata derived from GGUF inspection, not duplicated in `version` or `backendModel`.
-
-## Runtime byte binding
-
-Certification binds to load-time bytes, not just registry metadata.
-
-The inference plane resolves `backendModel` to a content-addressed CAS object by digest, verifies the object hash before model load, and fails closed on mismatch. Workers must not load mutable paths, provider aliases, or filenames that are not digest-addressed. Local caches are keyed by digest; cache hits are rehashed before use. If the CAS object is missing or mismatched, the model is unavailable even if the catalog entry still exists.
-
-## Trust roles
-
-| Role | Holder | Purpose | Can certify verification? |
-|---|---|---|---|
-| Offline S46 root | S46, offline threshold 3-of-5 | Authorize S46 certification/yank keys and the online org-provenance delegation key | No direct online certification |
-| Online org-provenance delegation key | S46 HSM/KMS threshold 2-of-3 | Sign org provenance key enrollments, rotations, and revocations | No |
-| Org provenance key | Customer org | Sign uploaded artifact provenance: "this is Acme's artifact" | No |
-| S46 certification key | S46 HSM/KMS threshold 2-of-3 | Sign green S46 verification certificates | Yes |
-| S46 yank/status key | S46 HSM/KMS threshold 2-of-3 | Sign yank and security-status records | Yes, for status/yank state |
-| Sigsum log | Transparency service | Append-only inclusion and checkpoints | No |
-| Independent Sigsum witnesses | Non-S46 operators | Anti-equivocation witness cosigning | No |
-
-The offline root does not sign every org enrollment. It signs an online delegation document that authorizes the org-provenance delegation key. The trust root contains offline root metadata, S46 certification/yank delegations, the Sigsum witness policy, and the current org-provenance delegation key. The org provenance key registry is a separate signed and logged document produced by that online delegation key. The delegation key signs org key enrollment, rotation, and revocation records. Routine org key enrollment, rotation, and revocation never require an offline-root ceremony. The offline root convenes only for root rotation, delegation-key rotation, S46 certification-key rotation, or emergency revocation.
-
-Operator scopes are split accordingly:
-
-- `org-provenance-key:enroll:{namespace}`: submit an enrollment to the online delegation signer.
-- `org-provenance-key:revoke:{namespace}`: revoke an org provenance key through the online delegation signer.
-- `s46-certification-key:request-rotation`: open a rotation workflow; no API token can authorize the offline root operation.
-- `models:publish:{namespace}` and `models:yank:{namespace}`: operate lifecycle jobs, never bypass verification.
-
-`trust-root:update` is not an API token scope because trust-root/root-key updates require offline threshold ceremony.
-
-## Key lifecycle
-
-### Root and delegations
-
-- Offline root custody: 3-of-5 threshold, offline/HSM-backed, access-controlled ceremony.
-- Root metadata validity: 1 year maximum.
-- Online org-provenance delegation validity: 30 days, renewed before expiry and logged to Sigsum.
-- S46 certification and yank key delegations: 90 days maximum with 30-day overlap during rotation.
-- Clients accept signatures only if the signing time falls within a valid, non-revoked delegation window.
-
-### Org provenance enrollment
-
-1. Org owner/admin requests enrollment for a namespace.
-2. API checks explicit org membership and namespace ownership.
-3. Org proves possession by signing a nonce.
-4. S46 online delegation signer signs an enrollment record for the org provenance key.
-5. Enrollment record is submitted to Sigsum with witness cosigning.
-6. Clients accept the org key only after verifying the online delegation signature and fresh log inclusion.
-
-Org enrollment grants provenance authority only. It never grants certification authority.
-
-### Rotation
-
-- Org provenance keys overlap old/new for 30 days.
-- S46 certification/yank keys overlap old/new for 30 days.
-- Delegation-key rotation requires offline root signature, then dual-published delegation docs for one client release cycle.
-
-### Revocation
-
-- Leaked org provenance key: online delegation signer publishes and logs a revocation; future provenance signatures are rejected. Existing S46 certifications remain valid unless separately yanked.
-- Leaked S46 certification key: offline emergency ceremony revokes the key, publishes a new root/delegation set, logs the revocation, and yanks or re-verifies affected releases. Threshold certification means one leaked key is insufficient to forge a certificate.
-
-## Sigsum freshness and witness independence
-
-Sigsum is the freshness anchor. Static registry indexes are a cache and discovery surface, not the freshness authority.
-
-Every S46 release certificate and yank record is:
-
-1. signed by the appropriate S46 threshold key;
-2. submitted to Sigsum;
-3. included under a checkpoint;
-4. witness-cosigned by an independent witness quorum.
-
-Client witness policy is pinned in the signed root:
-
-- quorum: at least 2 independent witnesses;
-- at most 1 witness may be operated by S46;
-- witnesses must be on separate administrative domains;
-- clients reject checkpoints that do not satisfy the pinned policy;
-- clients store the highest checkpoint they have accepted and require monotonic consistency.
-
-A client verifies a model by obtaining a fresh checkpoint, verifying inclusion for the release certificate, checking consistency with its stored checkpoint, and scanning S46 release/yank leaves up to the fresh checkpoint for records affecting the requested `{model, version, artifactDigest}`. If a network attacker hides the log, the client fails closed after the freshness window.
-
-## Yank semantics
-
-Yank is a security property, not a filesystem state.
-
-Internal serving fails safe at yank intent:
-
-1. org/S46 admin requests yank;
-2. API atomically marks the release `yanking` and sets an internal resolver block flag;
-3. inference routing stops serving that release immediately;
-4. worker signs and logs the yank record;
-5. release transitions to `yanked` after Sigsum inclusion succeeds.
-
-If signing or logging fails, state remains `yanking`, serving remains halted, and the job retries. External signed/logged yank records are for clients and audit; they are not the gate for Sovereign46's own inference plane to stop serving.
-
-External clients are forced to observe yanks by the monotonic Sigsum freshness check. A rolled-back static index is insufficient because the client must verify a fresh, witness-cosigned checkpoint and scan all S46 status records through that checkpoint.
-
-## Release state machine
-
-States:
-
-```txt
-staged -> validating -> validated -> publishing -> published -> yanking -> yanked
-             |                              |
-             v                              v
-           failed                         failed
-```
-
-Legal transitions:
-
-| From | To | Trigger |
-|---|---|---|
-| `staged` | `validating` | `POST /validate` queues S46 certification work |
-| `validating` | `validated` | S46 verification suite passes on S46 infra |
-| `validating` | `failed` | S46 verification fails or quota expires |
-| `validated` | `publishing` | `POST /publish` queues registry activation |
-| `publishing` | `published` | CAS, registry, certificate, and Sigsum activation succeed |
-| `publishing` | `failed` | activation fails before public availability |
-| `published` | `yanking` | `POST /yank` sets resolver block immediately |
-| `yanking` | `yanked` | signed/logged yank record reaches Sigsum |
-| `failed` | `staged` | explicit retry with a new artifact or reset |
-
-Synchronous endpoints create/list records and create/finalize upload sessions. Long-running endpoints return `202 Accepted` and require polling:
-
-```txt
-POST /v1/admin/model-releases/{releaseId}/validate
-POST /v1/admin/model-releases/{releaseId}/publish
-POST /v1/admin/model-releases/{releaseId}/yank
-```
-
-`Idempotency-Key` is required on finalize-upload, validate, publish, and yank. Reusing the same key with the same request returns the prior result; reusing it with a different body returns `409`. Mutating endpoints require `If-Match` with the release ETag/revision; stale revisions return `412`.
-
-## Server-side certification
-
-Validation means S46 re-ran and established the green requirements. It never means S46 accepted an org-signed assertion.
-
-The certification worker runs on S46-controlled infrastructure, reads the artifact from quarantine CAS, records runner image digest, verification-suite version, policy digest, evidence digests, and GGUF metadata, then signs a green certificate only if all required gates pass.
-
-The release package/submission contract has a version field:
+`GET /v1/admin/models`
 
 ```json
 {
-  "schema": "s46.model-submission.v1",
-  "namespace": "acme.platform",
-  "modelSlug": "devstral-q4",
-  "artifact": {
-    "sha256": "...",
-    "size": 123456789
-  },
-  "provenance": {
-    "optionalOrgSignature": "..."
-  }
+  "models": [
+    {
+      "id": "s46/devstral-small-2-24b",
+      "displayName": "Devstral Small 2 24B",
+      "provider": "s46",
+      "region": "EU-OPO",
+      "capabilities": ["chat", "code", "streaming", "tools"],
+      "contextWindow": 128000,
+      "maxOutputTokens": 8192,
+      "inputCostMicrosPerToken": 0,
+      "outputCostMicrosPerToken": 0,
+      "status": "ready",
+      "backendModel": "s46://models/s46/devstral-small-2-24b/releases/r000001/artifacts/sha256:...",
+      "digest": "sha256:...",
+      "certified": true,
+      "published": true,
+      "yanked": false,
+      "advisoryBlocked": false,
+      "globallyBlocked": false,
+      "sigsumStatus": "verified",
+      "verificationState": "trusted",
+      "syncedAt": "2030-01-01T12:00:00Z"
+    }
+  ]
 }
 ```
 
-Ingest rejects unknown or unsupported contract versions.
+Important fields:
 
-## Versioning and latest
+| Field | Meaning |
+| --- | --- |
+| `id` | Public model id accepted by gateway requests. |
+| `status` | Serving/catalog status. |
+| `certified` | The registry entry has Sovereign46 certification evidence. |
+| `published` | The model is published in the verified registry mirror. |
+| `yanked`, `advisoryBlocked`, `globallyBlocked` | Do not serve when any of these are true. |
+| `verificationState` | Trust state from registry/advisory verification. Production serving expects `trusted`. |
+| `backendModel` | System-assigned backend/CAS binding. Clients do not supply this. |
+| `digest` / `artifactDigest` / `sha256` | Content hash fields from the registry. |
 
-Versions are API-assigned immutable per-model sequence numbers:
+`GET /v1/admin/models?team=%40s46%2Fengineering` includes `modelPolicies` in the same response:
+
+```json
+{
+  "models": [],
+  "modelPolicies": [
+    {
+      "team": "@s46/engineering",
+      "organizationSlug": "s46",
+      "modelId": "s46/devstral-small-2-24b",
+      "allowed": true,
+      "isDefault": true,
+      "revision": 3,
+      "etag": "W/\"3\""
+    }
+  ]
+}
+```
+
+## Read team model policy
+
+`GET /v1/admin/model-policies?team={team}`
+
+```json
+{
+  "modelPolicies": [
+    {
+      "team": "@s46/engineering",
+      "organizationSlug": "s46",
+      "modelId": "s46/devstral-small-2-24b",
+      "allowed": true,
+      "isDefault": true,
+      "revision": 3,
+      "etag": "W/\"3\"",
+      "updatedAt": "2030-01-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+## Update team model policy
+
+`PUT /v1/admin/model-policies`
+
+Headers:
 
 ```txt
-r000001
-r000002
-r000003
+Authorization: Bearer <owner-or-admin-access-token>
+Idempotency-Key: <stable-key-for-this-attempt>
+If-Match: W/"3"        # optional when updating a known revision
+```
+
+Body:
+
+```json
+{
+  "team": "@s46/engineering",
+  "modelId": "s46/devstral-small-2-24b",
+  "allowed": true,
+  "isDefault": true
+}
+```
+
+Response headers include the current `ETag`; response body is the saved policy row:
+
+```json
+{
+  "team": "@s46/engineering",
+  "organizationSlug": "s46",
+  "modelId": "s46/devstral-small-2-24b",
+  "allowed": true,
+  "isDefault": true,
+  "revision": 4,
+  "etag": "W/\"4\""
+}
 ```
 
 Rules:
 
-- unique key: `(namespace, modelSlug, version)`;
-- order: numeric sequence;
-- latest: highest `published` sequence that is not `yanked` or `yanking`;
-- quantization: GGUF-derived metadata, not part of version;
-- replacement: always a new version.
+- `Idempotency-Key` is required for `PUT` and `PATCH`.
+- Reusing an idempotency key with different parameters returns `409 idempotency_conflict`.
+- A stale `If-Match` returns `412 precondition_failed`.
+- In production, operator admin-token credentials cannot update org model policy; use scoped org owner/admin bearer credentials.
+- Disallowing a model is tenant policy only. It takes effect immediately for that team, but it is not a global yank.
 
-## Manifest-only
+## Serving rules
 
-A manifest-only release is any public model entry that lacks at least one of:
+The gateway checks both sources before serving production model requests:
 
-- S46 certification record;
-- S46 certification threshold signature;
-- Sigsum inclusion proof under the pinned witness policy;
-- artifact stored in S46 CAS under the certified digest;
-- runtime resolver binding to that CAS digest.
+1. the verified registry mirror says the model is certified, published, trusted, and not yanked or advisory-blocked;
+2. `team_model_policies` allows the model for the caller's team.
 
-New API publishing rejects manifest-only releases. New clients refuse them in strict production mode. During migration, legacy entries that have not been re-verified by S46 are labeled `legacy-uncertified`, not silently promoted.
+If the model is not allowed for the team, production gateway requests return `403 model_not_allowed`. If the model is allowed but no upstream/local model path is available, production returns `503 model_unavailable`.
 
-## Upload, quotas, and ingestion safety
+## Trust model for consumers
 
-Multi-GB GGUFs do not stream through the API process.
+The API mirrors `https://models.s46.dev`, verifies the signed registry and advisory/yank indexes, and fails closed: verification failure clears the serving catalog rather than serving untrusted model metadata.
 
-Upload flow:
-
-1. API creates a release row in `staged`.
-2. API creates a presigned multipart upload to object storage.
-3. Org uploads directly to object storage.
-4. Org finalizes with expected size and SHA-256.
-5. Worker hashes the object and moves it into quarantine CAS.
-6. Verification reads only from quarantine CAS.
-
-No `artifactSourceUrl` exists in v1. If later added, it must enforce scheme restrictions, egress allowlists, private/link-local range blocking, redirect caps, size caps, and hash-on-fetch before the object enters CAS.
-
-Quotas:
-
-- per-org active validations: plan-configured, default 2;
-- per-org submission rate: plan-configured, default 10/day;
-- per-org queued GPU-hour ceiling and certification cost ceiling: plan-configured, default 24 GPU-hours/week;
-- global certification queue: bounded and fair-share scheduled by org; when the bounded queue is full, new validation requests are rejected instead of unboundedly accumulating;
-- failed or abandoned validations count against quota until cleanup or manual release.
-
-Optional provenance archives are bounded and hardened:
-
-- max compressed size 64 MiB;
-- max expanded size 512 MiB;
-- max entries 1000;
-- regular files only;
-- no symlinks, hardlinks, devices, absolute paths, `..`, or non-normalized paths;
-- package digest verified before extraction;
-- decompression ratio capped.
-
-## Serving, atomicity, and retention
-
-First deployment target is a single authoritative `models.s46.dev` origin host behind Caddy. Symlink swap is atomic only on that host. If the registry becomes multi-host, activation must move to immutable object-storage indexes plus CDN invalidation; symlink swap is not a distributed atomicity mechanism.
-
-Activation ordering invariant:
-
-1. artifact written to content-addressed path;
-2. artifact fsync/durable;
-3. manifest, certificate, and evidence references written;
-4. Sigsum inclusion and witness cosignatures obtained;
-5. signed index written;
-6. directory fsync;
-7. `current` symlink swapped.
-
-Retention/GC:
-
-- incomplete uploads: delete after 24h;
-- staged unvalidated artifacts: delete after 14 days;
-- failed validation artifacts/evidence: retain 30 days unless legal hold;
-- published/yanked certification evidence: retain at least 7 years;
-- published/yanked artifacts: retain at least 7 years, cold-tier after 180 days if not latest;
-- unreferenced CAS blobs: mark-and-sweep after a 30-day grace period.
-
-## Authorization and namespaces
-
-Publishing under a namespace requires explicit org `owner` or `admin` membership. Team admins alone cannot publish unless they are also org admins. `member` and `viewer` may read according to policy but cannot stage, validate, publish, or yank.
-
-The authorization check is target-scoped: it checks the requested organization, not the first admin membership found on the bearer token. First-admin bootstrap is by S46 invitation or verified-domain onboarding; "first membership is admin" is not a rule.
-
-Namespace rules:
-
-- namespace IDs are ASCII lowercase only;
-- Unicode display names are allowed but do not affect identity;
-- protected exact names and confusable skeletons for `s46`, `sovereign46`, and known brands are reserved;
-- namespace transfer is support-only and requires source owner, target owner, and S46 operator approval.
-
-Operator tokens are scoped, short-lived, rotated, audited, and require a reason. They do not bypass S46 verification policy.
-
-## Team model policy
-
-`team_model_policies` is the source of truth for team allow/deny/default model policy.
-
-`teams.models` is a migration cache only. Runtime resolution skips releases in `yanking` or `yanked` regardless of team policy. If all releases for a handle are yanked, the handle is unavailable even if policy still allows it.
-
-## API shape
-
-List endpoints are paginated from the first version:
-
-```txt
-GET /v1/admin/model-releases?namespace=acme.platform&modelSlug=devstral-q4&state=published&limit=50&pageToken=...
-```
-
-Defaults:
-
-- cursor pagination;
-- default `limit=50`;
-- max `limit=100`;
-- filters: `namespace`, `modelSlug`, `state`, `team`, `yanked`, `createdAfter`, `publishedAfter`.
-
-Create body:
-
-```json
-{
-  "namespace": "acme.platform",
-  "modelSlug": "devstral-q4"
-}
-```
-
-Upload-session/finalize/validate/publish/yank use opaque `releaseId` path parameters only. Model IDs are not URL path parameters.
-
-## Migration
-
-Legacy releases are not grandfathered.
-
-Phase 0: publish signed root/delegation metadata and update clients to understand both the legacy pinned key and the new root/delegation path. The legacy pinned-key path is compatibility/discovery only for new clients; it is not a green certification path unless the model also has a fresh S46 server-side certificate.
-
-Phase 1: re-verify legacy models on S46-controlled certification workers. A legacy model receives an S46 certification record only after successful server-side re-verification. Legacy entries not yet re-verified are labeled `legacy-uncertified`.
-
-Phase 2: dual-publish where needed. Old clients continue to work only for legacy S46 models signed by the old pinned key. New org namespaces require new clients.
-
-Phase 3: deprecate the old pinned key after at least 180 days and two CLI releases. The new authority is signed root/delegation metadata, S46 certification signatures, and Sigsum freshness.
+Consumers should treat `backendModel`, artifact digests, registry signatures, advisory URLs, and yank URLs as evidence fields. They are useful for display and audit, but gateway requests should send the public `id` field.

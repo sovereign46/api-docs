@@ -1,4 +1,15 @@
 {
   "title": "s46 API",
-  "pages": ["index", "auth", "cli", "admin", "models", "workers", "errors"]
+  "pages": [
+    "index",
+    "operations",
+    "auth",
+    "account",
+    "teams-sessions",
+    "admin",
+    "models",
+    "worker-control",
+    "gateway",
+    "errors"
+  ]
 }

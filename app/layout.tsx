@@ -38,7 +38,7 @@ const clipboardFallback = `
 
 export const metadata = {
   title: 's46 API docs',
-  description: 'Sovereign46 API contract for CLI, admin, workers, and integrations.',
+  description: 'Sovereign46 API contract for consumers, admin tooling, workers, and model gateway integrations.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -11,7 +11,7 @@ export function buildLlmsText() {
 
   return `# Sovereign46 API docs
 
-> Production contract for Sovereign46 API clients, CLI integrations, admin tooling, workers, and automation.
+> Production contract for Sovereign46 API consumers, admin tooling, workers, and model gateway integrations.
 
 Canonical URLs:
 - Docs: ${SITE_URL}/docs
@@ -23,7 +23,7 @@ Contract constraints:
 - Use canonical \`@org/team\` team identifiers.
 - Use \`region\` terminology; legacy \`lane\` does not appear in new payloads.
 - Tenant wildcard hosts are not part of the production contract.
-- Browser and CLI clients use user-scoped bearer tokens from the invite-gated device flow.
+- User-facing clients use user-scoped bearer tokens from the invite-gated device flow.
 
 ## Documentation pages
 

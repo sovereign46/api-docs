@@ -1,22 +1,34 @@
 ---
 title: Overview
-description: Production contract for the Sovereign46 API.
+description: Production contract for Sovereign46 API consumers.
 ---
 
-Base URL: `https://api.s46.dev`.
+Base URLs:
+
+| Surface | Base URL | Use it for |
+| --- | --- | --- |
+| Control plane | `https://api.s46.dev` | auth, account, teams, sessions, admin, worker control |
+| Harness gateway | `https://gateway.s46.dev` | OpenAI, Anthropic, and Codex-compatible model calls |
 
 Machine-readable schema: [`/openapi.json`](/openapi.json). LLM index: [`/llms.txt`](/llms.txt).
 
-The API is explicitly org-scoped. Teams use canonical `@org/team` identifiers, for example `@s46/engineering`. Tenant wildcard hosts are not part of the contract; harness traffic routes through `https://gateway.s46.dev` unless a development or airplane-mode endpoint is configured.
+## Build in this order
+
+1. Check [status endpoints](/docs/operations) and wire JSON error handling.
+2. Implement [auth](/docs/auth) and store device-bound access/refresh credentials.
+3. Read [the current account](/docs/account), then resolve [team metadata](/docs/teams-sessions) for the team the user selected.
+4. Use the returned team `endpoint`, `defaultModel`, and `models` when calling the [harness gateway](/docs/gateway).
+5. If the user is an org/team admin, expose [admin routes](/docs/admin) and [model policy routes](/docs/models).
+6. If you are building infrastructure, implement the [worker control protocol](/docs/worker-control).
 
 ## Core rules
 
-- Browser and CLI clients use user-scoped bearer tokens from the invite-gated magic-link/device flow.
+- The API is org-scoped. Teams use canonical `@org/team` identifiers, for example `@s46/engineering`.
+- User-facing clients use user-scoped bearer tokens from the invite-gated device flow.
 - Admin authorization accepts only `owner` and `admin` roles.
 - Membership roles are exactly `owner`, `admin`, `member`, and `viewer`.
-- The product term is `region`; legacy `lane` should not appear in new API payloads.
-- Production frontends must not expose `S46_ADMIN_TOKEN`.
-- No `acme` default tenant or production seed data.
+- The scheduling/location field is `region`; new consumers must not use legacy `lane` terminology.
+- Production clients must not embed `S46_ADMIN_TOKEN`. It is an operator bootstrap credential, not an end-user credential.
 
 ## Request conventions
 
@@ -28,7 +40,9 @@ Accept: application/json
 Content-Type: application/json
 ```
 
-All path parameters must be URL path-escaped. This matters for team IDs, emails, device IDs, worker IDs, job IDs, and session IDs:
+Browser flows may use the `s46_access` and `s46_refresh` HTTP-only cookies returned when login/refresh requests send `X-S46-Use-Cookies: true`.
+
+Path parameters must be URL path-escaped. This matters for team IDs, emails, device IDs, worker IDs, job IDs, and session IDs:
 
 | Value | Path segment |
 | --- | --- |
@@ -38,37 +52,30 @@ All path parameters must be URL path-escaped. This matters for team IDs, emails,
 
 Query parameters must be query-escaped, for example `?team=%40s46%2Fengineering`.
 
-## Current clients
-
-| Client | Uses | Auth |
-| --- | --- | --- |
-| `s46-cli` | `/v1/auth/*`, `/v1/me`, `/v1/devices`, `/v1/teams/{team}`, `/v1/sessions*` | user bearer token |
-| Admin UI | `/v1/auth/*`, `/v1/me`, `/v1/admin/*` | user bearer token plus same-site auth cookies in browser flows |
-| `s46-worker` | `/v1/worker/register`, `/v1/worker/heartbeat`, `/v1/worker/jobs/lease`, `/v1/worker/jobs/complete` | admin bearer for registration, worker bearer after registration |
-| Harnesses | gateway-compatible model routes under the team `endpoint` | user token command/provider config |
-
 ## Route groups
 
-| Group | Prefix | Purpose |
+| Group | Prefix | Start here |
 | --- | --- | --- |
-| Auth | `/v1/auth` | invite-gated device login, magic-link approval, refresh, logout |
-| Account | `/v1/me`, `/v1/devices` | current user and paired devices |
-| Teams/sessions | `/v1/teams`, `/v1/sessions` | CLI team metadata and session actions |
-| Admin | `/v1/admin` | organizations, people, teams, policies, models, workers, jobs, schedules, usage, audit |
-| Worker control | `/v1/worker`, `/v1/internal` | registration, heartbeat, job lease/complete, lease acknowledgement |
-| Harness gateway | `https://gateway.s46.dev` | OpenAI, Anthropic, and Codex-compatible model APIs |
+| Operations | `/healthz`, `/readyz`, `/debug/vars` | [Status and diagnostics](/docs/operations) |
+| Auth | `/v1/auth`, `/device` | [Sign in and refresh credentials](/docs/auth) |
+| Account | `/v1/me`, `/v1/devices` | [Current user and paired devices](/docs/account) |
+| Teams/sessions | `/v1/teams`, `/v1/sessions` | [Resolve team config and operate sessions](/docs/teams-sessions) |
+| Admin | `/v1/admin` | [Manage organizations, people, teams, workers, jobs, schedules, usage, and audit](/docs/admin) |
+| Models | `/v1/admin/models`, `/v1/admin/model-policies` | [Discover certified models and manage team allow/default policy](/docs/models) |
+| Worker control | `/v1/worker`, `/v1/internal` | [Register workers, lease jobs, and complete work](/docs/worker-control) |
+| Harness gateway | `https://gateway.s46.dev` | [Call OpenAI, Anthropic, and Codex-compatible model APIs](/docs/gateway) |
 
 ## Errors
 
-Errors are JSON objects:
+All JSON errors use the same envelope:
 
 ```json
 {
   "error": {
-    "code": "forbidden",
-    "message": "forbidden"
+    "code": "invalid_request",
+    "message": "invalid request"
   }
 }
 ```
 
-Use HTTP status plus `error.code`; do not parse human message text for control flow.
+Branch on HTTP status plus `error.code`; never parse `message` for control flow. See [Errors and status codes](/docs/errors).

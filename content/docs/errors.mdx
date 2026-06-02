@@ -20,34 +20,43 @@ Some authentication bootstrap errors include additional fields, but clients shou
 
 | HTTP | Code | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_request` | malformed JSON, invalid path/query value, unsupported state |
-| 401 | `authenticate_first` | browser/device approval requires an authenticated magic-link session first |
-| 401 | `unauthorized` | missing, expired, revoked, or invalid bearer/cookie credential |
-| 403 | `not_invited` | email is not currently invited or invitation was revoked |
-| 403 | `forbidden` | authenticated user lacks owner/admin role for target org/team, or model/team is disallowed |
-| 404 | `not_found` | target resource does not exist or is not visible to the credential |
-| 405 | `method_not_allowed` | route exists but HTTP method is unsupported |
-| 409 | `conflict` | resource conflict or duplicate state |
-| 410 | `expired` | login, magic link, or token expired |
-| 428 | `authorization_pending` | polling target is not ready yet |
-| 429 | `capacity_limited` | model/worker capacity exists but is temporarily saturated |
-| 503 | `email_unavailable` | production invite or magic-link email delivery is not configured or failed |
-| 503 | `model_unavailable` | no ready upstream/local model worker is available |
-| 500 | `internal_error` | unhandled server-side failure |
+| 400 | `invalid_request` | Malformed path/query/body value or unsupported state. |
+| 400 | `bad_json` | Invalid JSON request body. |
+| 401 | `authenticate_first` | Browser/device approval requires an authenticated magic-link session first. |
+| 401 | `unauthorized` | Missing, expired, revoked, or invalid bearer/cookie/worker credential. |
+| 403 | `not_invited` | Email is not currently invited or invitation was revoked. |
+| 403 | `forbidden` | Authenticated user lacks owner/admin role for target org/team, or the action is disallowed. |
+| 403 | `model_not_allowed` | Gateway caller requested a model that is not certified/allowed for the team. |
+| 404 | `not_found` | Target resource does not exist or is not visible to the credential. |
+| 405 | `method_not_allowed` | Route exists but HTTP method is unsupported. |
+| 409 | `conflict` | Resource conflict or duplicate state. |
+| 409 | `idempotency_conflict` | `Idempotency-Key` was reused with different parameters. |
+| 410 | `expired` | Login, magic link, or token expired. |
+| 412 | `precondition_failed` | `If-Match` revision/ETag is stale. |
+| 428 | `authorization_pending` | Polling target is not ready yet. |
+| 428 | `precondition_required` | Required precondition header such as `Idempotency-Key` is missing. |
+| 429 | `rate_limited` | Request or stream rate limit exceeded. |
+| 429 | `capacity_limited` | Model/worker capacity exists but is temporarily saturated. |
+| 503 | `email_unavailable` | Production invite or magic-link email delivery is not configured or failed. |
+| 503 | `model_unavailable` | No ready upstream/local model worker is available. |
+| 503 | `service_unavailable` | Control service is unavailable. |
+| 503 | `rate_limiter_unavailable` | Rate limiter backend is unavailable. |
+| 500 | `internal_error` | Unhandled server-side failure. |
 
 ## `authorization_pending`
 
 `authorization_pending` is used by polling-style endpoints where the caller should retry later:
 
-- device login waiting for magic-link approval
-- session attach waiting for a queued remote session
-- worker job leasing when no compatible work is currently available or the worker cannot lease yet
+- device login waiting for magic-link approval;
+- session attach or stream waiting for a queued remote session;
+- worker job leasing when no compatible work is currently available or the worker cannot lease yet.
 
-Branch on the endpoint context rather than treating this code as device-login-only.
+Branch on endpoint context rather than treating this code as device-login-only.
 
 ## Client guidance
 
 - Retry `authorization_pending` after the endpoint-specific polling interval or exponential backoff.
 - Refresh credentials on `401 unauthorized` only when the client has a valid refresh token/cookie.
-- Do not retry `403 forbidden` without changing credentials or membership.
+- Do not retry `403 forbidden` or `403 model_not_allowed` without changing credentials, membership, or model policy.
+- Preserve and reuse `Idempotency-Key` for safe retries of idempotent mutations.
 - Do not parse `message`; it is human-readable and may change.

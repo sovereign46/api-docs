@@ -1,13 +1,31 @@
 ---
-title: Auth and account
-description: Magic-link device login and user-scoped bearer tokens.
+title: Auth
+description: Invite-gated login, passkeys, cookies, token refresh, logout, and device approval.
 ---
 
-The CLI and admin UI use the same invite-gated device flow. A user must have an active invitation before login can start.
+A user must have an active invitation for the target organization/team before login can start. Access tokens are short-lived and device-bound. Refresh tokens are also device-bound and may rotate; always persist the newest refresh token returned by the API.
 
-Access tokens are short-lived and device-bound. Refresh tokens are also device-bound and may rotate; clients must persist the latest returned refresh token. Revoking a paired device invalidates that device's token family.
+## Auth route inventory
 
-## Start device login
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/v1/auth/device/start` | Start invite-gated device login. |
+| `POST` | `/v1/auth/login/start` | Compatibility alias for `/v1/auth/device/start`. |
+| `GET` | `/v1/auth/magic/consume?token=...` | Render magic-link confirmation. Does not consume the token. |
+| `POST` | `/v1/auth/magic/consume` | Consume magic-link token and approve the device login. |
+| `POST` | `/v1/auth/device/poll` | Poll until approval returns a token set. |
+| `POST` | `/v1/auth/token/refresh` | Rotate access/refresh credentials. |
+| `POST` | `/v1/auth/passkeys/register/start` | Start WebAuthn/passkey registration for the authenticated user. |
+| `POST` | `/v1/auth/passkeys/register/finish` | Finish passkey registration. |
+| `POST` | `/v1/auth/passkeys/login/start` | Start passkey login for an email. |
+| `POST` | `/v1/auth/passkeys/login/finish` | Finish passkey login and return a token set. |
+| `POST` | `/v1/auth/logout` | Clear browser auth cookies. |
+| `GET` | `/device` | Check whether the browser session can approve a device code. |
+| `POST` | `/device` | Approve a pending device code for the authenticated browser user. |
+
+## Device login flow
+
+### 1. Start login
 
 `POST /v1/auth/device/start`
 
@@ -19,13 +37,11 @@ Access tokens are short-lived and device-bound. Refresh tokens are also device-b
 }
 ```
 
-Fields:
-
 | Field | Required | Notes |
 | --- | --- | --- |
-| `email` | yes | invited account email |
-| `deviceId` | yes | stable client-chosen revocable device id |
-| `deviceName` | no | human-readable device label |
+| `email` | yes | Invited account email. |
+| `deviceId` | yes | Stable client-chosen revocable device id. |
+| `deviceName` | no | Human-readable device label. |
 
 Response `202 Accepted`:
 
@@ -41,11 +57,17 @@ Response `202 Accepted`:
 
 Common failures: `403 not_invited`, `400 invalid_request`, `503 email_unavailable`.
 
-## Approve magic link
+### 2. Approve the login
 
 `GET /v1/auth/magic/consume?token=...` renders the confirmation page. The `GET` validates but does not consume the token, so email scanners cannot approve a login.
 
-`POST /v1/auth/magic/consume` consumes the token and approves the pending device. Browser forms send `application/x-www-form-urlencoded` with `token=...`; JSON clients may send:
+`POST /v1/auth/magic/consume` consumes the token, creates a browser session cookie, and approves the pending device login. Browser forms send `application/x-www-form-urlencoded`:
+
+```txt
+token=...
+```
+
+JSON clients may send:
 
 ```json
 { "token": "..." }
@@ -53,7 +75,7 @@ Common failures: `403 not_invited`, `400 invalid_request`, `503 email_unavailabl
 
 Reuse or expired links fail with `401 unauthorized` or `410 expired`.
 
-## Poll device login
+### 3. Poll for credentials
 
 `POST /v1/auth/device/poll`
 
@@ -72,11 +94,12 @@ Pending approval returns `428 authorization_pending`:
 }
 ```
 
-Approved login returns tokens:
+Approved login returns a token set:
 
 ```json
 {
   "account": "dscape@s46.dev",
+  "organization": "s46",
   "team": "@s46/engineering",
   "deviceId": "dev-laptop",
   "accessToken": "s46_access_...",
@@ -85,24 +108,42 @@ Approved login returns tokens:
 }
 ```
 
-Browser clients that send `X-S46-Use-Cookies: true` receive auth cookies and a redacted token set in the JSON body.
+Send `X-S46-Use-Cookies: true` on polling or passkey-login finish when a browser client wants HTTP-only `s46_access`/`s46_refresh` cookies. In that mode the JSON body redacts `accessToken` and `refreshToken`.
 
-## Passkeys
+## Authenticated device approval
 
-Passkey registration requires an authenticated bearer token. The start endpoint returns WebAuthn creation options; send the browser credential response to finish.
-
-- `POST /v1/auth/passkeys/register/start`
-- `POST /v1/auth/passkeys/register/finish`
-
-Passkey login is email-scoped. Start returns WebAuthn request options; finish returns the same token-set shape as device polling.
-
-- `POST /v1/auth/passkeys/login/start`
-- `POST /v1/auth/passkeys/login/finish`
-
-Login start body:
+`GET /device` requires a bearer token or the browser session cookie set by magic-link approval. It returns:
 
 ```json
-{ "email": "dscape@s46.dev" }
+{
+  "authenticated": true,
+  "user": {
+    "email": "dscape@s46.dev",
+    "organization": "s46",
+    "team": "@s46/engineering",
+    "role": "member"
+  }
+}
+```
+
+Unauthenticated requests return `401 authenticate_first` with an `auth` object pointing at `/v1/auth/device/start`, `/v1/auth/magic/consume?token=...`, and `/device`.
+
+`POST /device` approves a pending device for the authenticated user:
+
+```json
+{ "userCode": "WXYZ-1234" }
+```
+
+Response:
+
+```json
+{
+  "approved": true,
+  "user": {
+    "email": "dscape@s46.dev",
+    "team": "@s46/engineering"
+  }
+}
 ```
 
 ## Refresh
@@ -116,9 +157,31 @@ Login start body:
 }
 ```
 
-Response is the same token-set shape as approved device polling. Clients must replace the stored refresh token when a new one is returned.
+Response is the same token-set shape as device polling. Replace the stored refresh token when a new one is returned.
 
-Browser clients may send `X-S46-Use-Cookies: true` and omit the JSON body; the API reads the refresh token from the auth cookie, rotates credentials, and refreshes cookies.
+Browser clients may send `X-S46-Use-Cookies: true` and omit the JSON body; the API reads the refresh token from the `s46_refresh` cookie, rotates credentials, and refreshes cookies.
+
+## Passkeys
+
+Passkey registration requires an authenticated bearer token or auth cookie. The start endpoint returns WebAuthn creation options; send the browser credential response to finish.
+
+```txt
+POST /v1/auth/passkeys/register/start
+POST /v1/auth/passkeys/register/finish
+```
+
+Passkey login is email-scoped. Start returns WebAuthn request options; finish returns the same token-set shape as device polling.
+
+```txt
+POST /v1/auth/passkeys/login/start
+POST /v1/auth/passkeys/login/finish
+```
+
+Login start body:
+
+```json
+{ "email": "dscape@s46.dev" }
+```
 
 ## Logout
 
@@ -130,42 +193,4 @@ Clears browser auth cookies and returns:
 { "ok": true }
 ```
 
-CLI clients usually revoke devices instead of calling logout.
-
-## Current user
-
-`GET /v1/me`
-
-Requires `Authorization: Bearer <accessToken>` or a valid browser auth cookie.
-
-```json
-{
-  "email": "dscape@s46.dev",
-  "organization": "s46",
-  "team": "@s46/engineering",
-  "role": "owner"
-}
-```
-
-## Devices
-
-- `GET /v1/devices`
-- `DELETE /v1/devices/{deviceId}`
-
-`GET /v1/devices` returns active devices:
-
-```json
-{
-  "devices": [
-    {
-      "id": "dev-laptop",
-      "name": "Dev laptop",
-      "createdAt": "2030-01-01T10:00:00Z",
-      "lastSeenAt": "2030-01-01T12:30:00Z",
-      "lastSeenIp": "203.0.113.10"
-    }
-  ]
-}
-```
-
-Deleting the current device invalidates its token family immediately. `deviceId` must be URL path-escaped.
+Bearer-token clients usually revoke a device instead of calling logout. Device management is documented in [Account](/docs/account).

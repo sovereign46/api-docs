@@ -2,7 +2,20 @@ import defaultMdxComponents from 'fumadocs-ui/mdx';
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/layouts/docs/page';
 import { notFound } from 'next/navigation';
 
+import { Card, Cards, EndpointMeta, Method, Note, RouteIndex, Step, Steps } from '@/lib/docs-components';
 import { source } from '@/lib/source';
+
+const mdxComponents = {
+  ...defaultMdxComponents,
+  Card,
+  Cards,
+  EndpointMeta,
+  Method,
+  Note,
+  RouteIndex,
+  Step,
+  Steps,
+};
 
 export default async function Page({ params }: { params: Promise<{ slug?: string[] }> }) {
   const { slug } = await params;
@@ -16,7 +29,7 @@ export default async function Page({ params }: { params: Promise<{ slug?: string
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <MDX components={defaultMdxComponents} />
+        <MDX components={mdxComponents} />
       </DocsBody>
     </DocsPage>
   );

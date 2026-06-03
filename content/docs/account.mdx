@@ -3,19 +3,41 @@ title: Account
 description: Current user and paired-device management.
 ---
 
-Account routes require `Authorization: Bearer <accessToken>` or a valid `s46_access` auth cookie.
+Current user and paired-device management. All account routes require `Authorization: Bearer <accessToken>` or a valid `s46_access` auth cookie.
 
-## Account route inventory
+<RouteIndex page="account" />
+
+## Route inventory
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/v1/me` | Return the authenticated user, organization, team, and role. |
+| `GET` | `/v1/me` | Authenticated user, organization, team, and role. |
 | `GET` | `/v1/devices` | List active paired devices for the account. |
 | `DELETE` | `/v1/devices/{deviceId}` | Revoke a paired device and its token family. |
 
 ## Current user
 
-`GET /v1/me`
+<Method method="GET" path="/v1/me" returns="200" />
+
+Returns the identity behind the bearer token. Use the `role` to decide whether to show admin surfaces: `owner` and `admin` may call admin routes for their target org/team; `member` and `viewer` may not.
+
+<EndpointMeta>Auth · **bearer / cookie**</EndpointMeta>
+
+```bash
+curl https://api.s46.dev/v1/me \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+```ts
+const me = await fetch("https://api.s46.dev/v1/me", {
+  headers: { Authorization: `Bearer ${accessToken}` },
+}).then((r) => r.json());
+```
+
+```py
+me = requests.get("https://api.s46.dev/v1/me",
+                  headers={"Authorization": f"Bearer {access_token}"}).json()
+```
 
 ```json
 {
@@ -26,11 +48,43 @@ Account routes require `Authorization: Bearer <accessToken>` or a valid `s46_acc
 }
 ```
 
-Use this response to determine whether admin surfaces should be shown. `owner` and `admin` may call admin routes for their target org/team; `member` and `viewer` may not.
-
 ## Paired devices
 
-`GET /v1/devices`
+<Method method="GET" path="/v1/devices" returns="200" />
+<Method method="DELETE" path="/v1/devices/{deviceId}" returns="200" />
+
+List the account's active devices, or revoke one. `deviceId` must be URL path-escaped. Deleting the *current* device invalidates the token family used for the request.
+
+<EndpointMeta>Auth · **bearer / cookie**</EndpointMeta>
+
+```bash
+# List devices
+curl https://api.s46.dev/v1/devices \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+
+# Revoke a device (deviceId must be URL path-escaped)
+curl -X DELETE https://api.s46.dev/v1/devices/dev-laptop \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+```ts
+const devices = await fetch("https://api.s46.dev/v1/devices", {
+  headers: { Authorization: `Bearer ${accessToken}` },
+}).then((r) => r.json());
+
+await fetch("https://api.s46.dev/v1/devices/dev-laptop", {
+  method: "DELETE",
+  headers: { Authorization: `Bearer ${accessToken}` },
+});
+```
+
+```py
+devices = requests.get("https://api.s46.dev/v1/devices",
+                       headers={"Authorization": f"Bearer {access_token}"}).json()
+
+requests.delete("https://api.s46.dev/v1/devices/dev-laptop",
+                headers={"Authorization": f"Bearer {access_token}"})
+```
 
 ```json
 {
@@ -49,13 +103,6 @@ Use this response to determine whether admin surfaces should be shown. `owner` a
 }
 ```
 
-`DELETE /v1/devices/{deviceId}` revokes a device immediately:
-
 ```json
-{
-  "revoked": true,
-  "deviceId": "dev-laptop"
-}
+{ "revoked": true, "deviceId": "dev-laptop" }
 ```
-
-`deviceId` must be URL path-escaped. Deleting the current device invalidates the token family used for the request.

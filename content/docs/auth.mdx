@@ -1,49 +1,74 @@
 ---
 title: Auth
-description: Invite-gated login, passkeys, cookies, token refresh, logout, and device approval.
+description: Invite-gated login, passkeys, cookies, token refresh, logout, and device approval. A user must hold an active invitation before login can start.
 ---
 
-A user must have an active invitation for the target organization/team before login can start. Access tokens are short-lived and device-bound. Refresh tokens are also device-bound and may rotate; always persist the newest refresh token returned by the API.
+<Note tag="Invite only">
+  Your account email must have an active invitation for the target org before login can start. Tokens are short-lived and device-bound; always persist the newest refresh token returned by the API.
+</Note>
 
-## Auth route inventory
+<RouteIndex page="auth" />
+
+## Route inventory
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `POST` | `/v1/auth/device/start` | Start invite-gated device login. |
-| `POST` | `/v1/auth/login/start` | Compatibility alias for `/v1/auth/device/start`. |
-| `GET` | `/v1/auth/magic/consume?token=...` | Render magic-link confirmation. Does not consume the token. |
-| `POST` | `/v1/auth/magic/consume` | Consume magic-link token and approve the device login. |
+| `POST` | `/v1/auth/device/start` | Start invite-gated device login. (alias: `/v1/auth/login/start`) |
+| `GET` | `/v1/auth/magic/consume` | Render magic-link confirmation. Does not consume the token. |
+| `POST` | `/v1/auth/magic/consume` | Consume the token and approve the device login. |
 | `POST` | `/v1/auth/device/poll` | Poll until approval returns a token set. |
 | `POST` | `/v1/auth/token/refresh` | Rotate access/refresh credentials. |
-| `POST` | `/v1/auth/passkeys/register/start` | Start WebAuthn/passkey registration for the authenticated user. |
-| `POST` | `/v1/auth/passkeys/register/finish` | Finish passkey registration. |
-| `POST` | `/v1/auth/passkeys/login/start` | Start passkey login for an email. |
-| `POST` | `/v1/auth/passkeys/login/finish` | Finish passkey login and return a token set. |
+| `POST` | `/v1/auth/passkeys/…` | WebAuthn register & login (start / finish). |
 | `POST` | `/v1/auth/logout` | Clear browser auth cookies. |
-| `GET` | `/device` | Check whether the browser session can approve a device code. |
-| `POST` | `/device` | Approve a pending device code for the authenticated browser user. |
+| `GET·POST` | `/device` | Check & approve a pending device code as the browser user. |
 
-## Device login flow
+## Start device login
 
-### 1. Start login
+<Method method="POST" path="/v1/auth/device/start" returns="202" />
 
-`POST /v1/auth/device/start`
+Begin the device authorization grant. Returns a short `userCode` for the human to approve plus a `deviceCode` the client polls with.
 
-```json
-{
-  "email": "dscape@s46.dev",
-  "deviceId": "dev-laptop",
-  "deviceName": "Dev laptop"
-}
-```
+<EndpointMeta>Auth · **none (invite-gated)**</EndpointMeta>
+
+### Body
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `email` | yes | Invited account email. |
-| `deviceId` | yes | Stable client-chosen revocable device id. |
-| `deviceName` | no | Human-readable device label. |
+| `email` | required | Invited account email. Must exist in the org directory. |
+| `deviceId` | required | Stable, client-chosen, revocable device id. Reuse on refresh. |
+| `deviceName` | optional | Human label shown in the device list. Defaults to hostname. |
 
-Response `202 Accepted`:
+```bash
+curl -X POST https://api.s46.dev/v1/auth/device/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "dscape@s46.dev",
+    "deviceId": "dev-laptop",
+    "deviceName": "Dev laptop"
+  }'
+```
+
+```ts
+const start = await fetch("https://api.s46.dev/v1/auth/device/start", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    email: "dscape@s46.dev",
+    deviceId: "dev-laptop",
+    deviceName: "Dev laptop",
+  }),
+}).then((r) => r.json());
+```
+
+```py
+import requests
+
+start = requests.post("https://api.s46.dev/v1/auth/device/start", json={
+    "email": "dscape@s46.dev",
+    "deviceId": "dev-laptop",
+    "deviceName": "Dev laptop",
+}).json()
+```
 
 ```json
 {
@@ -55,46 +80,102 @@ Response `202 Accepted`:
 }
 ```
 
-Common failures: `403 not_invited`, `400 invalid_request`, `503 email_unavailable`.
+### Errors
 
-### 2. Approve the login
+<table>
+  <tbody>
+    <tr><td><code>403</code></td><td><code>not_invited</code></td><td>Email is not invited or invite was revoked.</td></tr>
+    <tr><td><code>400</code></td><td><code>invalid_request</code></td><td>Missing or malformed field.</td></tr>
+    <tr><td><code>503</code></td><td><code>email_unavailable</code></td><td>Magic-link email delivery is not configured or failed.</td></tr>
+  </tbody>
+</table>
 
-`GET /v1/auth/magic/consume?token=...` renders the confirmation page. The `GET` validates but does not consume the token, so email scanners cannot approve a login.
+## Approve the login
 
-`POST /v1/auth/magic/consume` consumes the token, creates a browser session cookie, and approves the pending device login. Browser forms send `application/x-www-form-urlencoded`:
+<Method method="GET" path="/v1/auth/magic/consume?token=…" returns="page" />
+<Method method="POST" path="/v1/auth/magic/consume" returns="200" />
 
-```txt
-token=...
+The `GET` renders the confirmation page and *validates but does not consume* the token, so email scanners can't approve a login. The `POST` consumes the token, creates a browser session cookie, and approves the pending device login.
+
+<EndpointMeta>Auth · **token-scoped**</EndpointMeta>
+
+```bash
+# JSON clients
+curl -X POST https://api.s46.dev/v1/auth/magic/consume \
+  -H "Content-Type: application/json" \
+  -d '{ "token": "..." }'
+
+# Browser forms post application/x-www-form-urlencoded: token=...
 ```
 
-JSON clients may send:
-
-```json
-{ "token": "..." }
+```ts
+await fetch("https://api.s46.dev/v1/auth/magic/consume", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ token: "..." }),
+});
 ```
 
-Reuse or expired links fail with `401 unauthorized` or `410 expired`.
-
-### 3. Poll for credentials
-
-`POST /v1/auth/device/poll`
-
-```json
-{ "deviceCode": "s46_device_..." }
+```py
+requests.post("https://api.s46.dev/v1/auth/magic/consume",
+              json={"token": "..."})
 ```
 
-Pending approval returns `428 authorization_pending`:
+### Errors
 
-```json
-{
-  "error": {
-    "code": "authorization_pending",
-    "message": "authorization pending"
+<table>
+  <tbody>
+    <tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Link reused or session invalid.</td></tr>
+    <tr><td><code>410</code></td><td><code>expired</code></td><td>Magic link expired.</td></tr>
+  </tbody>
+</table>
+
+## Poll for credentials
+
+<Method method="POST" path="/v1/auth/device/poll" returns="200 / 428" />
+
+Exchange a `deviceCode` for a token set once the user approves. Respect `intervalSeconds`; polling faster earns `429 rate_limited`. Send `X-S46-Use-Cookies: true` to receive HTTP-only cookies instead (the JSON then redacts the token values).
+
+<EndpointMeta>Auth · **none (device-scoped)**</EndpointMeta>
+
+```bash
+curl -X POST https://api.s46.dev/v1/auth/device/poll \
+  -H "Content-Type: application/json" \
+  -d '{ "deviceCode": "s46_device_..." }'
+```
+
+```ts
+async function poll(deviceCode, intervalSeconds) {
+  for (;;) {
+    const res = await fetch("https://api.s46.dev/v1/auth/device/poll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceCode }),
+    });
+    if (res.status === 200) return res.json();          // token set
+    if (res.status !== 428) throw new Error(await res.text());
+    await new Promise((r) => setTimeout(r, intervalSeconds * 1000));
   }
 }
 ```
 
-Approved login returns a token set:
+```py
+import time
+
+while True:
+    res = requests.post("https://api.s46.dev/v1/auth/device/poll",
+                        json={"deviceCode": start["deviceCode"]})
+    if res.status_code == 200:
+        tokens = res.json()
+        break
+    if res.status_code != 428:
+        res.raise_for_status()
+    time.sleep(start["intervalSeconds"])
+```
+
+```json
+{ "error": { "code": "authorization_pending", "message": "authorization pending" } }
+```
 
 ```json
 {
@@ -108,11 +189,100 @@ Approved login returns a token set:
 }
 ```
 
-Send `X-S46-Use-Cookies: true` on polling or passkey-login finish when a browser client wants HTTP-only `s46_access`/`s46_refresh` cookies. In that mode the JSON body redacts `accessToken` and `refreshToken`.
+## Refresh
+
+<Method method="POST" path="/v1/auth/token/refresh" returns="200" />
+
+Rotate the access token. Refresh tokens are device-bound and may themselves rotate — replace the stored refresh token whenever a new one is returned. Browser clients may send `X-S46-Use-Cookies: true` and omit the body; the API reads the refresh token from the `s46_refresh` cookie.
+
+<EndpointMeta>Auth · **refresh token / cookie**</EndpointMeta>
+
+```bash
+curl -X POST https://api.s46.dev/v1/auth/token/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account": "dscape@s46.dev",
+    "refreshToken": "s46_refresh_..."
+  }'
+```
+
+```ts
+const next = await fetch("https://api.s46.dev/v1/auth/token/refresh", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    account: "dscape@s46.dev",
+    refreshToken: stored.refreshToken,
+  }),
+}).then((r) => r.json());
+store(next.refreshToken); // always persist the new one
+```
+
+```py
+nxt = requests.post("https://api.s46.dev/v1/auth/token/refresh", json={
+    "account": "dscape@s46.dev",
+    "refreshToken": stored["refreshToken"],
+}).json()
+store(nxt["refreshToken"])  # always persist the new one
+```
+
+```json
+{
+  "account": "dscape@s46.dev",
+  "team": "@s46/engineering",
+  "deviceId": "dev-laptop",
+  "accessToken": "s46_access_...",
+  "refreshToken": "s46_refresh_...",
+  "expiresAt": "2030-01-01T14:00:00Z"
+}
+```
+
+<Note tag="Reuse" tone="warn">
+  Presenting an already-rotated refresh token invalidates the entire token family for that device and forces a fresh device login. This is intentional — it kills replay instantly.
+</Note>
+
+### Errors
+
+<table>
+  <tbody>
+    <tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Refresh token missing, invalid, or revoked.</td></tr>
+    <tr><td><code>410</code></td><td><code>expired</code></td><td>Refresh token expired.</td></tr>
+  </tbody>
+</table>
 
 ## Authenticated device approval
 
-`GET /device` requires a bearer token or the browser session cookie set by magic-link approval. It returns:
+<Method method="GET" path="/device" returns="200" />
+<Method method="POST" path="/device" returns="200" />
+
+`GET /device` reports whether the current browser session (or bearer token) can approve a device code. `POST /device` approves a pending device for the authenticated user.
+
+<EndpointMeta>Auth · **bearer or session cookie**</EndpointMeta>
+
+```bash
+# Approve a pending device
+curl -X POST https://api.s46.dev/device \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "userCode": "WXYZ-1234" }'
+```
+
+```ts
+await fetch("https://api.s46.dev/device", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ userCode: "WXYZ-1234" }),
+});
+```
+
+```py
+requests.post("https://api.s46.dev/device",
+              headers={"Authorization": f"Bearer {access_token}"},
+              json={"userCode": "WXYZ-1234"})
+```
 
 ```json
 {
@@ -126,71 +296,76 @@ Send `X-S46-Use-Cookies: true` on polling or passkey-login finish when a browser
 }
 ```
 
-Unauthenticated requests return `401 authenticate_first` with an `auth` object pointing at `/v1/auth/device/start`, `/v1/auth/magic/consume?token=...`, and `/device`.
-
-`POST /device` approves a pending device for the authenticated user:
-
-```json
-{ "userCode": "WXYZ-1234" }
-```
-
-Response:
-
 ```json
 {
   "approved": true,
-  "user": {
-    "email": "dscape@s46.dev",
-    "team": "@s46/engineering"
-  }
+  "user": { "email": "dscape@s46.dev", "team": "@s46/engineering" }
 }
 ```
 
-## Refresh
+### Errors
 
-`POST /v1/auth/token/refresh`
-
-```json
-{
-  "account": "dscape@s46.dev",
-  "refreshToken": "s46_refresh_..."
-}
-```
-
-Response is the same token-set shape as device polling. Replace the stored refresh token when a new one is returned.
-
-Browser clients may send `X-S46-Use-Cookies: true` and omit the JSON body; the API reads the refresh token from the `s46_refresh` cookie, rotates credentials, and refreshes cookies.
+<table>
+  <tbody>
+    <tr><td><code>401</code></td><td><code>authenticate_first</code></td><td>No authenticated session; the response carries an <code>auth</code> object pointing at the login routes.</td></tr>
+  </tbody>
+</table>
 
 ## Passkeys
 
-Passkey registration requires an authenticated bearer token or auth cookie. The start endpoint returns WebAuthn creation options; send the browser credential response to finish.
+<Method method="POST" path="/v1/auth/passkeys/register/start · /finish" />
+<Method method="POST" path="/v1/auth/passkeys/login/start · /finish" />
 
-```txt
-POST /v1/auth/passkeys/register/start
-POST /v1/auth/passkeys/register/finish
+WebAuthn registration requires an authenticated bearer token or auth cookie; `start` returns creation options, `finish` takes the browser credential. Passkey *login* is email-scoped: `start` returns request options and `finish` returns the same token-set shape as device polling.
+
+<EndpointMeta>Auth · **bearer (register) · email (login)**</EndpointMeta>
+
+```bash
+# Begin passkey login for an email
+curl -X POST https://api.s46.dev/v1/auth/passkeys/login/start \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "dscape@s46.dev" }'
 ```
 
-Passkey login is email-scoped. Start returns WebAuthn request options; finish returns the same token-set shape as device polling.
-
-```txt
-POST /v1/auth/passkeys/login/start
-POST /v1/auth/passkeys/login/finish
+```ts
+const options = await fetch("https://api.s46.dev/v1/auth/passkeys/login/start", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "dscape@s46.dev" }),
+}).then((r) => r.json());
+// pass options to navigator.credentials.get(), then POST to /login/finish
 ```
 
-Login start body:
-
-```json
-{ "email": "dscape@s46.dev" }
+```py
+options = requests.post("https://api.s46.dev/v1/auth/passkeys/login/start",
+                        json={"email": "dscape@s46.dev"}).json()
 ```
 
 ## Logout
 
-`POST /v1/auth/logout`
+<Method method="POST" path="/v1/auth/logout" returns="200" />
 
-Clears browser auth cookies and returns:
+Clears browser auth cookies. Bearer-token clients usually [revoke a device](/docs/account#paired-devices) instead of calling logout.
+
+```bash
+curl -X POST https://api.s46.dev/v1/auth/logout \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+```ts
+await fetch("https://api.s46.dev/v1/auth/logout", {
+  method: "POST",
+  headers: { Authorization: `Bearer ${accessToken}` },
+});
+```
+
+```py
+requests.post("https://api.s46.dev/v1/auth/logout",
+              headers={"Authorization": f"Bearer {access_token}"})
+```
 
 ```json
 { "ok": true }
 ```
 
-Bearer-token clients usually revoke a device instead of calling logout. Device management is documented in [Account](/docs/account).
+{/* OpenAPI coverage: /v1/auth/passkeys/register/start /v1/auth/passkeys/register/finish /v1/auth/passkeys/login/start /v1/auth/passkeys/login/finish */}

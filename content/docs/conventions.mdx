@@ -1,0 +1,92 @@
+---
+title: Conventions
+description: Authentication, escaping, rate limits, idempotency, concurrency, pagination, and versioning rules for every endpoint.
+---
+
+The rules that hold across **every** endpoint — authentication, escaping, rate limits, idempotency, concurrency, pagination, and versioning. Read this once; it applies everywhere.
+
+## Authentication
+
+Authenticated JSON endpoints take a device-bound bearer token plus JSON content negotiation:
+
+```http
+Authorization: Bearer <accessToken>
+Accept: application/json
+Content-Type: application/json
+```
+
+- Browser flows may instead use the HTTP-only `s46_access` / `s46_refresh` cookies, returned when a login or refresh request sends `X-S46-Use-Cookies: true`.
+- Access tokens are short-lived and device-bound; refresh tokens rotate. Persist the newest refresh token every time.
+
+## Path & query escaping
+
+Identifiers contain `@` and `/`, so path parameters must be URL path-escaped and query values query-escaped. This applies to team IDs, emails, device IDs, and worker / job / session IDs.
+
+| Value | Path segment |
+| --- | --- |
+| `@s46/engineering` | `%40s46%2Fengineering` |
+| `dscape@s46.dev` | `dscape%40s46.dev` |
+| `@dscape/auth-redirect-fix` | `%40dscape%2Fauth-redirect-fix` |
+
+## Rate limits
+
+Limits are enforced per credential and per IP on streaming routes. Two distinct conditions exist — back off on both:
+
+| Status | Code | Meaning & response |
+| --- | --- | --- |
+| `429` | `rate_limited` | Request or stream rate exceeded. Retry after `Retry-After`; otherwise use exponential backoff with jitter. |
+| `429` | `capacity_limited` | Model/worker capacity exists but is momentarily saturated. Safe to retry shortly — this is transient. |
+| `503` | `rate_limiter_unavailable` | Rate-limiter backend is down. Retry with backoff; do not hammer. |
+
+<Note tag="Backoff">
+  Honour `Retry-After` (seconds) when present. Without it, start at the endpoint's polling interval and double on each consecutive limit, capping at a sane ceiling.
+</Note>
+
+## Idempotency
+
+Make unsafe retries safe by sending an `Idempotency-Key` (a client-generated UUID) on mutating requests. The server replays the original result for repeats of the same key.
+
+```http
+POST /v1/admin/teams
+Authorization: Bearer <accessToken>
+Idempotency-Key: 9b7c1e0a-2f4d-4c8e-bf1a-1e2d3c4b5a6f
+Content-Type: application/json
+```
+
+- Reuse the *same* key — with the *same* parameters — when retrying a request you are unsure completed.
+- Reusing a key with different parameters fails with `409 idempotency_conflict`.
+- Endpoints that require a key reject requests that omit it with `428 precondition_required`.
+
+## Concurrency & ETags
+
+Mutable resources return an `ETag`. To avoid clobbering a concurrent write, send it back with `If-Match` on updates — the write only applies if the revision still matches.
+
+```http
+PATCH /v1/admin/teams/%40s46%2Fengineering
+If-Match: "rev-42"
+Content-Type: application/json
+```
+
+A stale revision is rejected with `412 precondition_failed`. Re-read the resource, reapply your change, and retry.
+
+## Pagination
+
+List endpoints (people, devices, jobs, audit, usage) are cursor-paginated. Pass `limit` and an opaque `cursor`; never construct cursors yourself.
+
+```json
+// GET /v1/admin/people?limit=50&cursor=eyJvIjoxMDB9
+{
+  "data": [ /* ... up to `limit` items ... */ ],
+  "hasMore": true,
+  "nextCursor": "eyJvIjoxNTB9"
+}
+```
+
+When `hasMore` is `true`, pass `nextCursor` as the next request's `cursor`. A `null` `nextCursor` means you have reached the end.
+
+## Versioning & deprecation
+
+- The major version is in the path: `/v1`. Breaking changes ship as a new major; `/v1` stays stable.
+- **Additive** changes (new fields, new endpoints, new enum members) are not breaking — tolerate unknown fields and ignore what you don't use.
+- Deprecated routes return a `Deprecation: true` header and a `Sunset` date; migrate before that date.
+- Changes are announced in the [changelog](#). Pin to behaviour, not to undocumented response ordering.

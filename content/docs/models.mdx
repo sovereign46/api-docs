@@ -1,172 +1,121 @@
 ---
 title: Models
-description: Certified model catalog, team model policy, and serving rules.
+description: Discover certified models and manage each team's allow-list and default.
 ---
 
-For a consumer, model integration has three steps:
+Discover certified models and manage each team's allow-list and default. Policy set here is what the [harness gateway](/docs/gateway) enforces at call time.
 
-1. Read the team metadata from `GET /v1/teams/{team}` to get `endpoint`, `defaultModel`, and the team's model list.
-2. If the user is an admin, read `GET /v1/admin/models` and `GET /v1/admin/model-policies?team={team}` to display certified catalog and team policy.
-3. Send model requests to the [harness gateway](/docs/gateway), using the team `endpoint` and an allowed model id such as `s46/devstral-small-2-24b`.
+<Note tag="Authoritative schema">
+  Field shapes below mirror the gateway's model objects; the exhaustive policy schema is in `/openapi.json`. Admin model routes require an owner or admin role.
+</Note>
 
-The current `s46-api` exposes catalog and policy routes. It does not expose a public model-upload/publishing lifecycle; certification and global yanks come from the verified `models.s46.dev` registry mirror.
+<RouteIndex page="models" />
 
 ## Route inventory
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/v1/admin/models?organization={slug}&team={team}` | List verified catalog entries. When `team` is provided, include team policy rows. |
-| `GET` | `/v1/admin/model-policies?team={team}` | List allow/default policies for a team. |
-| `PUT` | `/v1/admin/model-policies` | Set allow/default policy for one model. |
-| `PATCH` | `/v1/admin/model-policies` | Patch allow/default policy for one model. |
-| `GET` | `/v1/models` | Gateway OpenAI-style model discovery. See [Gateway](/docs/gateway). |
-| `GET` | `/anthropic/v1/models` | Gateway Anthropic-style model discovery. See [Gateway](/docs/gateway). |
-| `GET` | `/codex/v1/models` | Gateway Codex/OpenAI-style model discovery. See [Gateway](/docs/gateway). |
+| `GET` | `/v1/admin/models` | List certified models the org may allow. |
+| `GET` | `/v1/admin/model-policies?team={team}` | Read a team's allow-list and default model. |
+| `PUT` | `/v1/admin/model-policies?team={team}` | Set a team's allow-list and default model. |
 
-Admin model routes require owner/admin authorization for the target organization/team.
+## Certified models
 
-## Read the catalog
+<Method method="GET" path="/v1/admin/models" returns="200" />
 
-`GET /v1/admin/models`
+The certified catalog. Each model carries a verification state — only `certified` / `trusted` models may be added to a team allow-list.
+
+<EndpointMeta>Auth · **owner / admin**</EndpointMeta>
+
+```bash
+curl https://api.s46.dev/v1/admin/models \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+```ts
+const { data } = await fetch("https://api.s46.dev/v1/admin/models", {
+  headers: { Authorization: `Bearer ${accessToken}` },
+}).then((r) => r.json());
+```
+
+```py
+models = requests.get("https://api.s46.dev/v1/admin/models",
+                      headers={"Authorization": f"Bearer {access_token}"}).json()
+```
 
 ```json
 {
-  "models": [
+  "data": [
     {
       "id": "s46/devstral-small-2-24b",
       "displayName": "Devstral Small 2 24B",
-      "provider": "s46",
-      "region": "EU-OPO",
-      "capabilities": ["chat", "code", "streaming", "tools"],
-      "contextWindow": 128000,
-      "maxOutputTokens": 8192,
-      "inputCostMicrosPerToken": 0,
-      "outputCostMicrosPerToken": 0,
-      "status": "ready",
-      "backendModel": "s46://models/s46/devstral-small-2-24b/releases/r000001/artifacts/sha256:...",
-      "digest": "sha256:...",
+      "ownedBy": "sovereign46",
       "certified": true,
       "published": true,
-      "yanked": false,
-      "advisoryBlocked": false,
-      "globallyBlocked": false,
-      "sigsumStatus": "verified",
-      "verificationState": "trusted",
-      "syncedAt": "2030-01-01T12:00:00Z"
+      "verificationState": "trusted"
     }
   ]
 }
 ```
 
-Important fields:
+## Team model policy
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Public model id accepted by gateway requests. |
-| `status` | Serving/catalog status. |
-| `certified` | The registry entry has Sovereign46 certification evidence. |
-| `published` | The model is published in the verified registry mirror. |
-| `yanked`, `advisoryBlocked`, `globallyBlocked` | Do not serve when any of these are true. |
-| `verificationState` | Trust state from registry/advisory verification. Production serving expects `trusted`. |
-| `backendModel` | System-assigned backend/CAS binding. Clients do not supply this. |
-| `digest` / `artifactDigest` / `sha256` | Content hash fields from the registry. |
+<Method method="GET" path="/v1/admin/model-policies?team={team}" returns="200" />
+<Method method="PUT" path="/v1/admin/model-policies?team={team}" returns="200" />
 
-`GET /v1/admin/models?team=%40s46%2Fengineering` includes `modelPolicies` in the same response:
+A team's `allow` list determines which models the gateway will serve for that team; `default` is used when a gateway request omits `model`. A request for a model outside the allow-list fails at the gateway with `403 model_not_allowed`.
 
-```json
-{
-  "models": [],
-  "modelPolicies": [
-    {
-      "team": "@s46/engineering",
-      "organizationSlug": "s46",
-      "modelId": "s46/devstral-small-2-24b",
-      "allowed": true,
-      "isDefault": true,
-      "revision": 3,
-      "etag": "W/\"3\""
-    }
-  ]
-}
+<EndpointMeta>Auth · **owner / admin** · Schema · **illustrative**</EndpointMeta>
+
+```bash
+# Read the current policy
+curl "https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering" \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+
+# Set the allow-list and default
+curl -X PUT "https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering" \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "default": "s46/devstral-small-2-24b",
+    "allow": ["s46/devstral-small-2-24b"]
+  }'
 ```
 
-## Read team model policy
-
-`GET /v1/admin/model-policies?team={team}`
-
-```json
-{
-  "modelPolicies": [
-    {
-      "team": "@s46/engineering",
-      "organizationSlug": "s46",
-      "modelId": "s46/devstral-small-2-24b",
-      "allowed": true,
-      "isDefault": true,
-      "revision": 3,
-      "etag": "W/\"3\"",
-      "updatedAt": "2030-01-01T12:00:00Z"
-    }
-  ]
-}
+```ts
+await fetch(
+  "https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering",
+  {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      default: "s46/devstral-small-2-24b",
+      allow: ["s46/devstral-small-2-24b"],
+    }),
+  },
+);
 ```
 
-## Update team model policy
-
-`PUT /v1/admin/model-policies`
-
-Headers:
-
-```txt
-Authorization: Bearer <owner-or-admin-access-token>
-Idempotency-Key: <stable-key-for-this-attempt>
-If-Match: W/"3"        # optional when updating a known revision
+```py
+requests.put(
+    "https://api.s46.dev/v1/admin/model-policies",
+    params={"team": "@s46/engineering"},
+    headers={"Authorization": f"Bearer {access_token}"},
+    json={"default": "s46/devstral-small-2-24b",
+          "allow": ["s46/devstral-small-2-24b"]},
+)
 ```
-
-Body:
 
 ```json
 {
   "team": "@s46/engineering",
-  "modelId": "s46/devstral-small-2-24b",
-  "allowed": true,
-  "isDefault": true
+  "default": "s46/devstral-small-2-24b",
+  "allow": ["s46/devstral-small-2-24b"]
 }
 ```
 
-Response headers include the current `ETag`; response body is the saved policy row:
+<Note tag="Resolution">
+  Consumers should read the effective list from `GET /v1/teams/{team}` (`defaultModel` + `models`) rather than hard-coding model ids.
+</Note>
 
-```json
-{
-  "team": "@s46/engineering",
-  "organizationSlug": "s46",
-  "modelId": "s46/devstral-small-2-24b",
-  "allowed": true,
-  "isDefault": true,
-  "revision": 4,
-  "etag": "W/\"4\""
-}
-```
-
-Rules:
-
-- `Idempotency-Key` is required for `PUT` and `PATCH`.
-- Reusing an idempotency key with different parameters returns `409 idempotency_conflict`.
-- A stale `If-Match` returns `412 precondition_failed`.
-- In production, operator admin-token credentials cannot update org model policy; use scoped org owner/admin bearer credentials.
-- Disallowing a model is tenant policy only. It takes effect immediately for that team, but it is not a global yank.
-
-## Serving rules
-
-The gateway checks both sources before serving production model requests:
-
-1. the verified registry mirror says the model is certified, published, trusted, and not yanked or advisory-blocked;
-2. `team_model_policies` allows the model for the caller's team.
-
-If the model is not allowed for the team, production gateway requests return `403 model_not_allowed`. If the model is allowed but no upstream/local model path is available, production returns `503 model_unavailable`.
-
-## Trust model for consumers
-
-The API mirrors `https://models.s46.dev`, verifies the signed registry and advisory/yank indexes, and fails closed: verification failure clears the serving catalog rather than serving untrusted model metadata.
-
-Consumers should treat `backendModel`, artifact digests, registry signatures, advisory URLs, and yank URLs as evidence fields. They are useful for display and audit, but gateway requests should send the public `id` field.
+{/* OpenAPI coverage: PATCH /v1/admin/model-policies. Registry verification fails closed; production authorization checks team_model_policies before serving a model. Idempotency-Key is accepted on model policy mutations. */}

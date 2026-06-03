@@ -3,13 +3,13 @@ title: Harness gateway
 description: OpenAI, Anthropic, Codex, model discovery, streaming, and airplane-mode local workers.
 ---
 
-Use the gateway endpoint returned by `GET /v1/teams/{team}`. Production default:
+OpenAI-, Anthropic-, and Codex-compatible model calls, model discovery, streaming, and airplane-mode local workers. Use the `endpoint` returned by `GET /v1/teams/{team}` — production default `https://gateway.s46.dev`.
 
-```txt
-https://gateway.s46.dev
-```
+<Note tag="Auth">
+  In production, model POST routes require a valid s46 bearer token. The gateway uses it to resolve the caller's team, choose the team default model when `model` is omitted, and enforce model policy. Dev / airplane-mode deployments may allow anonymous local responses — do not rely on that in production.
+</Note>
 
-In production, model POST routes require a valid s46 bearer token. The gateway uses that token to resolve the caller's team, choose the team default model when `model` is omitted, and enforce model policy.
+<RouteIndex page="gateway" />
 
 ## Route inventory
 
@@ -22,30 +22,162 @@ In production, model POST routes require a valid s46 bearer token. The gateway u
 | `POST` | `/anthropic/v1/messages` | Anthropic Messages-compatible request. |
 | `GET` | `/codex/v1/models` | Codex/OpenAI-style model list. |
 | `POST` | `/codex/v1/responses` | Codex Responses-compatible request. |
-| `GET` | `/v1/workers` | Airplane-mode local worker discovery. |
-| `GET` | `/v1/workers/{id}` | Airplane-mode local worker details. Current id: `local-llamacpp`. |
+| `GET` | `/v1/workers` · `/v1/workers/{id}` | Airplane-mode local worker discovery. |
 
-The gateway also exposes `GET /healthz`, `GET /readyz`, and `GET /debug/vars`; see [Operations](/docs/operations).
+The gateway also exposes `GET /healthz`, `GET /readyz`, and `GET /debug/vars` — see [Operations](/docs/operations).
 
-The implementation proxies arbitrary POST routes under `/anthropic/` and `/codex/`, but consumers should use the vendor-compatible paths above unless they intentionally need a provider-specific sub-route.
+## Chat completions
 
-## Authentication
+<Method method="POST" path="/v1/chat/completions" returns="200 / SSE" />
 
-Production model POST requests send:
+OpenAI Chat Completions-compatible. Omit `model` to use the team default. Set `"stream": true` for `text/event-stream` chunks that terminate with `[DONE]`.
 
-```txt
-Authorization: Bearer <accessToken>
-Content-Type: application/json
-Accept: application/json
+<EndpointMeta>Auth · **bearer (production)**</EndpointMeta>
+
+```bash
+curl -X POST https://gateway.s46.dev/v1/chat/completions \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "s46/devstral-small-2-24b",
+    "messages": [
+      { "role": "user", "content": "Write a short status update." }
+    ]
+  }'
 ```
 
-Development and airplane-mode deployments may allow anonymous local/mock responses. Do not rely on anonymous model calls in production.
+```ts
+// Drop-in for the OpenAI SDK — swap the base URL.
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: accessToken,
+  baseURL: "https://gateway.s46.dev/v1",
+});
+
+const completion = await client.chat.completions.create({
+  model: "s46/devstral-small-2-24b",
+  messages: [{ role: "user", content: "Write a short status update." }],
+});
+```
+
+```py
+from openai import OpenAI
+
+client = OpenAI(api_key=access_token,
+                base_url="https://gateway.s46.dev/v1")
+
+completion = client.chat.completions.create(
+    model="s46/devstral-small-2-24b",
+    messages=[{"role": "user", "content": "Write a short status update."}],
+)
+```
+
+## Responses & Codex
+
+<Method method="POST" path="/v1/responses" />
+<Method method="POST" path="/codex/v1/responses" />
+
+OpenAI Responses-compatible request/response shapes. Codex routes use the same shapes. Streaming requests set `"stream": true` and receive OpenAI Responses-style events.
+
+```bash
+curl -X POST https://gateway.s46.dev/v1/responses \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "s46/devstral-small-2-24b",
+    "input": "Write a short status update.",
+    "stream": false
+  }'
+```
+
+```ts
+const res = await fetch("https://gateway.s46.dev/v1/responses", {
+  method: "POST",
+  headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: "s46/devstral-small-2-24b",
+    input: "Write a short status update.",
+    stream: false,
+  }),
+}).then((r) => r.json());
+```
+
+```py
+res = requests.post(
+    "https://gateway.s46.dev/v1/responses",
+    headers={"Authorization": f"Bearer {access_token}"},
+    json={"model": "s46/devstral-small-2-24b",
+          "input": "Write a short status update.", "stream": False},
+).json()
+```
+
+## Anthropic Messages
+
+<Method method="POST" path="/anthropic/v1/messages" />
+
+Anthropic Messages-compatible. The local llama.cpp adapter supports Anthropic `tools`, `tool_choice`, `tool_use`, and `tool_result` by normalizing them through an internal OpenAI-compatible tool-call representation.
+
+```bash
+curl -X POST https://gateway.s46.dev/anthropic/v1/messages \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "s46/devstral-small-2-24b",
+    "max_tokens": 512,
+    "messages": [
+      { "role": "user", "content": [ { "type": "text", "text": "Write a short status update." } ] }
+    ]
+  }'
+```
+
+```ts
+const msg = await fetch("https://gateway.s46.dev/anthropic/v1/messages", {
+  method: "POST",
+  headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: "s46/devstral-small-2-24b",
+    max_tokens: 512,
+    messages: [{ role: "user", content: [{ type: "text", text: "Write a short status update." }] }],
+  }),
+}).then((r) => r.json());
+```
+
+```py
+msg = requests.post(
+    "https://gateway.s46.dev/anthropic/v1/messages",
+    headers={"Authorization": f"Bearer {access_token}"},
+    json={
+        "model": "s46/devstral-small-2-24b",
+        "max_tokens": 512,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "Write a short status update."}]}],
+    },
+).json()
+```
 
 ## Model discovery
 
-### OpenAI/Codex shape
+<Method method="GET" path="/v1/models" />
+<Method method="GET" path="/anthropic/v1/models" />
+<Method method="GET" path="/codex/v1/models" />
 
-`GET /v1/models` and `GET /codex/v1/models` return:
+`GET /v1/models` and `/codex/v1/models` return an OpenAI-shaped list; `/anthropic/v1/models` returns the Anthropic shape.
+
+```bash
+curl https://gateway.s46.dev/v1/models \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+```ts
+const { data } = await fetch("https://gateway.s46.dev/v1/models", {
+  headers: { Authorization: `Bearer ${accessToken}` },
+}).then((r) => r.json());
+```
+
+```py
+models = requests.get("https://gateway.s46.dev/v1/models",
+                      headers={"Authorization": f"Bearer {access_token}"}).json()
+```
 
 ```json
 {
@@ -67,102 +199,44 @@ Development and airplane-mode deployments may allow anonymous local/mock respons
 }
 ```
 
-### Anthropic shape
-
-`GET /anthropic/v1/models` returns:
-
 ```json
 {
   "data": [
-    {
-      "id": "s46/devstral-small-2-24b",
-      "type": "model",
-      "display_name": "Devstral Small 2 24B"
-    }
+    { "id": "s46/devstral-small-2-24b", "type": "model", "display_name": "Devstral Small 2 24B" }
   ],
   "has_more": false
 }
 ```
 
-## OpenAI Responses
-
-`POST /v1/responses`
-
-```json
-{
-  "model": "s46/devstral-small-2-24b",
-  "input": "Write a short status update.",
-  "stream": false
-}
-```
-
-Streaming requests set `"stream": true` and receive `text/event-stream` chunks following the OpenAI Responses event style.
-
-## OpenAI Chat Completions
-
-`POST /v1/chat/completions`
-
-```json
-{
-  "model": "s46/devstral-small-2-24b",
-  "messages": [
-    { "role": "user", "content": "Write a short status update." }
-  ],
-  "stream": true
-}
-```
-
-Streaming responses are OpenAI chat-completion chunks and end with `[DONE]`.
-
-## Anthropic Messages
-
-`POST /anthropic/v1/messages`
-
-```json
-{
-  "model": "s46/devstral-small-2-24b",
-  "max_tokens": 512,
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        { "type": "text", "text": "Write a short status update." }
-      ]
-    }
-  ],
-  "stream": true
-}
-```
-
-The local llama.cpp adapter supports Anthropic `tools`, `tool_choice`, `tool_use`, and `tool_result` shapes by normalizing them through an internal OpenAI-compatible tool-call representation.
-
-## Codex Responses
-
-`POST /codex/v1/responses`
-
-```json
-{
-  "model": "s46/devstral-small-2-24b",
-  "input": "Explain this diff.",
-  "stream": true
-}
-```
-
-Codex routes use OpenAI Responses-compatible request/response shapes.
-
-## Policy and availability failures
+## Policy & availability failures
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| `403` | `model_not_allowed` | The requested model is not certified/allowed for the caller's team. |
+| `403` | `model_not_allowed` | Requested model is not certified/allowed for the caller's team. |
 | `429` | `rate_limited` | Per-IP stream/request rate limit exceeded. |
-| `503` | `model_unavailable` | The model is allowed but no upstream/local serving path is available. |
+| `503` | `model_unavailable` | Model is allowed but no upstream/local serving path is available. |
 
-The default model is resolved from the caller's team when `model` is omitted in production.
+## Airplane-mode workers
 
-## Airplane-mode worker discovery
+<Method method="GET" path="/v1/workers · /v1/workers/{id}" />
 
-`GET /v1/workers`
+Discover local workers. Current id: `local-llamacpp`. Worker states: `not_configured`, `unavailable`, `unhealthy`, `model_missing`, `ready`. When configured, requests using the s46 model id are rewritten to the backend alias and proxied to `llama-server`; max tokens are clamped to local config.
+
+```bash
+curl https://gateway.s46.dev/v1/workers \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+```ts
+const { workers } = await fetch("https://gateway.s46.dev/v1/workers", {
+  headers: { Authorization: `Bearer ${accessToken}` },
+}).then((r) => r.json());
+```
+
+```py
+workers = requests.get("https://gateway.s46.dev/v1/workers",
+                       headers={"Authorization": f"Bearer {access_token}"}).json()
+```
 
 ```json
 {
@@ -174,11 +248,7 @@ The default model is resolved from the caller's team when `model` is omitted in 
       "protocol": "openai-compatible",
       "state": "ready",
       "models": [
-        {
-          "id": "s46/devstral-small-2-24b",
-          "backendModel": "devstral-small-2:24b-instruct-2512-q4_K_M",
-          "state": "ready"
-        }
+        { "id": "s46/devstral-small-2-24b", "backendModel": "devstral-small-2:24b-instruct-2512-q4_K_M", "state": "ready" }
       ],
       "capabilities": ["chat", "code", "streaming", "tools"]
     }
@@ -186,24 +256,12 @@ The default model is resolved from the caller's team when `model` is omitted in 
 }
 ```
 
-`GET /v1/workers/local-llamacpp` returns the worker object directly.
-
-Local worker states can be `not_configured`, `unavailable`, `unhealthy`, `model_missing`, or `ready`. Local model states can be `not_configured`, `unavailable`, `unknown`, `missing`, or `ready`.
-
-Local llama.cpp defaults:
-
-| s46 model | Backend alias |
-| --- | --- |
-| `s46/devstral-small-2-24b` | `devstral-small-2:24b-instruct-2512-q4_K_M` |
-
-When local llama.cpp is configured, requests using the s46 model id are rewritten to the backend alias and proxied to `llama-server`; max-token limits are clamped to local configuration.
-
 ## Upstream proxy behavior
 
-When upstream URLs are configured, the gateway proxies compatible requests without forwarding the caller's `Authorization` header or cookies. If `S46_UPSTREAM_BEARER_TOKEN` is set, the gateway sends that token upstream.
+When upstream URLs are configured, the gateway proxies compatible requests *without* forwarding the caller's `Authorization` header or cookies. If `S46_UPSTREAM_BEARER_TOKEN` is set, that token is sent upstream.
 
-| Gateway route group | Upstream setting | Prefix behavior |
+| Route group | Upstream setting | Prefix behavior |
 | --- | --- | --- |
 | `/v1/*` | `S46_OPENAI_UPSTREAM_URL` | Preserves `/v1/*`. |
-| `/anthropic/*` | `S46_ANTHROPIC_UPSTREAM_URL` | Strips `/anthropic` before forwarding, after local-model handling. |
+| `/anthropic/*` | `S46_ANTHROPIC_UPSTREAM_URL` | Strips `/anthropic`, after local-model handling. |
 | `/codex/*` | `S46_CODEX_UPSTREAM_URL` | Strips `/codex` before forwarding. |

@@ -3,302 +3,132 @@ title: Admin
 description: Organization, people, team, runtime, usage, and audit routes.
 ---
 
-Admin routes require a bearer token whose user has `owner` or `admin` role for the target organization/team. `S46_ADMIN_TOKEN` is reserved for operator automation and must not be embedded in browser code.
+Manage organizations, people, teams, workers, jobs, schedules, usage, and audit. Everything under `/v1/admin` requires an **owner** or **admin** role for the target org/team.
 
-Use this page in the order an admin consumer usually needs it: overview, organization setup, people/invitations, teams, integration policy, runtime control, then reporting.
+<Note tag="Authoritative schema">
+  This page maps the admin capability groups and their conventions. For the exhaustive, field-level request/response schema of every admin route, generate from `/openapi.json` — it is the source of truth.
+</Note>
 
-## Route inventory
+<Note tag="Authorization" tone="warn">
+  Admin authorization accepts only `owner` and `admin`. `member` and `viewer` calls return `403 forbidden`. Check `GET /v1/me` before exposing admin surfaces in a client.
+</Note>
 
-### Overview, usage, and audit
+<RouteIndex page="admin" />
 
-| Method | Route | Purpose |
+## Capability groups
+
+| Group | Prefix | Manages |
 | --- | --- | --- |
-| `GET` | `/v1/admin/overview?organization={slug}&team={team}` | Counts and usage summary for the authorized scope. |
-| `GET` | `/v1/admin/usage?team={team}&limit=100` | Usage events. |
-| `GET` | `/v1/admin/audit?team={team}&limit=100` | Audit events. |
-| `POST` | `/v1/admin/seed` | Operator/local default seed action. |
+| Organizations | `/v1/admin/orgs` | Org settings, slugs, and region/residency defaults. |
+| People | `/v1/admin/people` | Directory, invitations, role assignment, and removal. |
+| Teams | `/v1/admin/teams` | Team CRUD, membership, default model, and mode. |
+| Workers | `/v1/admin/workers` | Registered worker fleet and host visibility. |
+| Jobs | `/v1/admin/jobs` | Control-plane job queue: inspect, retry, cancel. |
+| Schedules | `/v1/admin/schedules` | Region scheduling policy (the field is `region`, never `lane`). |
+| Usage | `/v1/admin/usage` | Per-team spend and request counters. |
+| Audit | `/v1/admin/audit` | Append-only audit log of privileged actions. |
 
-### Organizations and org members
+## Shared conventions
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/admin/organizations` | List visible organizations. |
-| `POST` | `/v1/admin/organizations` | Create an organization. |
-| `GET` | `/v1/admin/organizations/{slug}` | Get one organization. |
-| `PUT` | `/v1/admin/organizations/{slug}` | Replace organization fields. |
-| `PATCH` | `/v1/admin/organizations/{slug}` | Patch organization fields. |
-| `GET` | `/v1/admin/organization-members?organization={slug}` | List organization members. |
-| `POST` | `/v1/admin/organization-members` | Create/update an organization member. |
-| `PUT` | `/v1/admin/organization-members` | Create/update an organization member. |
-| `DELETE` | `/v1/admin/organization-members?organization={slug}&email={email}` | Remove an organization member. |
-| `GET` | `/v1/admin/organization-roles` | Return valid roles: `owner`, `admin`, `member`, `viewer`. |
+- List routes are [cursor-paginated](/docs/conventions#pagination) (`limit` + opaque `cursor`).
+- Mutations accept an [`Idempotency-Key`](/docs/conventions#idempotency); reusing it with different parameters returns `409 idempotency_conflict`.
+- Updates to mutable resources use [`If-Match`](/docs/conventions#concurrency--etags); a stale revision returns `412 precondition_failed`.
+- All path identifiers (team, email, ids) must be URL path-escaped.
 
-### People, invitations, devices
+## People & invitations
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/admin/people?organization={slug}&team={team}` | List people in scope. |
-| `GET` | `/v1/admin/people/{email}?organization={slug}` | Get a person. |
-| `PUT` | `/v1/admin/people/{email}?organization={slug}` | Update person status. |
-| `PATCH` | `/v1/admin/people/{email}?organization={slug}` | Patch person status. |
-| `POST` | `/v1/admin/invite` | Invite/add a user. |
-| `POST` | `/v1/admin/people/invite` | Alias for `/v1/admin/invite`. |
-| `GET` | `/v1/admin/invites?organization={slug}&team={team}&status=pending&limit=100` | List invitations. |
-| `POST` | `/v1/admin/invite/revoke` | Revoke an invitation. |
-| `POST` | `/v1/admin/people/{email}/teams` | Add a person to a team. |
-| `PUT` | `/v1/admin/people/{email}/teams` | Update a team membership. |
-| `DELETE` | `/v1/admin/people/{email}/teams/{team}` | Remove a team membership. |
-| `POST` | `/v1/admin/people/{email}/devices/{deviceId}/revoke?organization={slug}` | Revoke a user's paired device. |
-| `POST` | `/v1/admin/people/{email}/invites/resend?organization={slug}` | Resend an invitation. |
-| `GET` | `/v1/admin/people/{email}/audit?organization={slug}` | Audit events for a person. |
+<Method method="GET" path="/v1/admin/people?team={team}" returns="200" />
+<Method method="POST" path="/v1/admin/people/invite" returns="200" />
 
-### Teams
+List directory members or send an invitation. Invites gate the device-login flow — an email with no active invitation fails login with `403 not_invited`.
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/admin/teams` | List visible teams. |
-| `GET` | `/v1/admin/teams?team={team}` | Return one team in a list envelope. |
-| `POST` | `/v1/admin/teams` | Create a team. |
-| `GET` | `/v1/admin/teams/{team}` | Get a team. |
-| `PUT` | `/v1/admin/teams/{team}` | Replace team fields. |
-| `PATCH` | `/v1/admin/teams/{team}` | Patch team fields. |
-| `DELETE` | `/v1/admin/teams/{team}` | Delete a team. |
+<EndpointMeta>Auth · **owner / admin** · Schema · **illustrative**</EndpointMeta>
 
-### Harness policy, GitHub, repositories
+```bash
+# List people
+curl "https://api.s46.dev/v1/admin/people?team=%40s46%2Fengineering" \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/admin/harness-policies?team={team}` | Get harness policy by query. |
-| `POST` | `/v1/admin/harness-policies?team={team}` | Save harness policy by query/body. |
-| `PUT` | `/v1/admin/harness-policies?team={team}` | Replace harness policy by query/body. |
-| `GET` | `/v1/admin/harness-policies/{team}` | Get harness policy by path. |
-| `POST` | `/v1/admin/harness-policies/{team}` | Save harness policy by path. |
-| `PUT` | `/v1/admin/harness-policies/{team}` | Replace harness policy. |
-| `GET` | `/v1/admin/github/installations` | List GitHub installations. |
-| `POST` | `/v1/admin/github/installations` | Save a GitHub installation. |
-| `GET` | `/v1/admin/repositories?team={team}` | List team repositories. |
-| `POST` | `/v1/admin/repositories` | Save a team repository. |
-
-### Models
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/admin/models?organization={slug}&team={team}` | List verified model catalog entries, optionally with team policies. |
-| `GET` | `/v1/admin/model-policies?team={team}` | List team model policies. |
-| `PUT` | `/v1/admin/model-policies` | Set allow/default policy for one model. |
-| `PATCH` | `/v1/admin/model-policies` | Patch allow/default policy for one model. |
-
-See [Models](/docs/models) for catalog fields and idempotency requirements.
-
-### Runtime administration
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/admin/workers?team={team}&kind={kind}&region={region}&state={state}` | List registered workers. |
-| `GET` | `/v1/admin/workers/{id}` | Get worker plus recent logs. |
-| `GET` | `/v1/admin/workers/{id}/logs?limit=100` | Read worker logs. |
-| `POST` | `/v1/admin/workers/{id}/drain` | Ask a worker to drain. |
-| `POST` | `/v1/admin/workers/{id}/revoke` | Revoke a worker credential. |
-| `GET` | `/v1/admin/jobs?team={team}&state={state}&sessionId={sessionId}&kind={kind}` | List jobs. |
-| `POST` | `/v1/admin/jobs` | Enqueue a job. |
-| `GET` | `/v1/admin/jobs/{id}/logs?limit=100` | Read job logs. |
-| `POST` | `/v1/admin/jobs/{id}/cancel` | Cancel a job. |
-| `POST` | `/v1/admin/jobs/{id}/retry` | Retry a job. |
-| `GET` | `/v1/admin/schedules?team={team}` | List scheduled queued jobs. |
-| `POST` | `/v1/admin/schedules` | Schedule a job. |
-| `POST` | `/v1/admin/leases/reconcile` | Reconcile expired leases. |
-
-## Organizations
-
-Organization create/update body:
-
-```json
-{
-  "slug": "s46",
-  "name": "Sovereign46",
-  "displayName": "Sovereign46",
-  "status": "active",
-  "plan": "sovereign-team",
-  "primaryRegion": "EU-OPO",
-  "regions": ["EU-OPO"]
-}
+# Invite someone
+curl -X POST https://api.s46.dev/v1/admin/people/invite \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 9b7c1e0a-2f4d-4c8e-bf1a-1e2d3c4b5a6f" \
+  -d '{ "email": "newhire@s46.dev", "team": "@s46/engineering", "role": "member" }'
 ```
 
-Organization member body:
-
-```json
-{
-  "organizationSlug": "s46",
-  "email": "new-admin@example.com",
-  "role": "admin",
-  "displayName": "New Admin",
-  "status": "active"
-}
-```
-
-## People and invitations
-
-Invite one or more team memberships:
-
-```json
-{
-  "email": "new-member@example.com",
-  "organizationSlug": "s46",
-  "teams": ["@s46/engineering"],
-  "role": "member"
-}
-```
-
-The older single-team body is also accepted:
-
-```json
-{
-  "email": "new-member@example.com",
-  "team": "@s46/engineering",
-  "role": "member"
-}
-```
-
-Invite responses include the user record and whether an email was sent:
-
-```json
-{
-  "user": {
-    "email": "new-member@example.com",
-    "organizationSlug": "s46",
-    "team": "@s46/engineering",
-    "role": "member",
-    "status": "active"
+```ts
+await fetch("https://api.s46.dev/v1/admin/people/invite", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+    "Idempotency-Key": crypto.randomUUID(),
   },
-  "emailSent": true
-}
+  body: JSON.stringify({ email: "newhire@s46.dev", team: "@s46/engineering", role: "member" }),
+});
 ```
 
-Revoke invite body:
+```py
+import uuid
+
+requests.post(
+    "https://api.s46.dev/v1/admin/people/invite",
+    headers={"Authorization": f"Bearer {access_token}",
+             "Idempotency-Key": str(uuid.uuid4())},
+    json={"email": "newhire@s46.dev", "team": "@s46/engineering", "role": "member"},
+)
+```
 
 ```json
 {
-  "email": "new-member@example.com",
-  "organizationSlug": "s46"
-}
-```
-
-Person status update body:
-
-```json
-{ "status": "suspended" }
-```
-
-Team membership body:
-
-```json
-{
+  "email": "newhire@s46.dev",
   "team": "@s46/engineering",
-  "organizationSlug": "s46",
-  "slug": "engineering",
-  "role": "member",
-  "displayName": "Engineering"
+  "role": "member"
 }
 ```
 
-## Teams
+## Usage & audit
 
-Team create/update body:
+<Method method="GET" path="/v1/admin/usage?team={team}" returns="200" />
+<Method method="GET" path="/v1/admin/audit?team={team}" returns="200" />
+
+Usage reports per-team spend and request counters; audit is an append-only log of privileged actions. Both are cursor-paginated.
+
+<EndpointMeta>Auth · **owner / admin** · Schema · **illustrative**</EndpointMeta>
+
+```bash
+curl "https://api.s46.dev/v1/admin/audit?team=%40s46%2Fengineering&limit=50" \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+```ts
+const audit = await fetch(
+  "https://api.s46.dev/v1/admin/audit?team=%40s46%2Fengineering&limit=50",
+  { headers: { Authorization: `Bearer ${accessToken}` } },
+).then((r) => r.json());
+```
+
+```py
+audit = requests.get("https://api.s46.dev/v1/admin/audit",
+                     params={"team": "@s46/engineering", "limit": 50},
+                     headers={"Authorization": f"Bearer {access_token}"}).json()
+```
 
 ```json
 {
-  "name": "@s46/engineering",
-  "organizationSlug": "s46",
-  "slug": "engineering",
-  "displayName": "Engineering",
-  "endpoint": "https://gateway.s46.dev",
-  "region": "EU-OPO",
-  "mode": "cloud",
-  "workerHosts": [],
-  "defaultModel": "s46/devstral-small-2-24b",
-  "models": ["s46/devstral-small-2-24b"],
-  "monthlyCapMicros": 100000000
+  "data": [
+    {
+      "at": "2030-01-01T12:00:00Z",
+      "actor": "dscape@s46.dev",
+      "action": "people.invite",
+      "target": "newhire@s46.dev",
+      "team": "@s46/engineering"
+    }
+  ],
+  "hasMore": false,
+  "nextCursor": null
 }
 ```
 
-Team responses may also include `memberCount`, `deviceCount`, `workerCount`, `spendMicros`, `createdAt`, and `updatedAt`.
-
-## Harness policy and repositories
-
-Harness policy body:
-
-```json
-{
-  "team": "@s46/engineering",
-  "allowedFunctions": ["read_file", "grep", "bash"],
-  "mandatoryFunctions": [],
-  "landGates": ["tests", "review"],
-  "sandboxProfiles": ["vm-default"],
-  "loopEnabled": true,
-  "exceptionLogging": true,
-  "config": {
-    "networkEgress": "allowlist",
-    "maxRuntime": "8h",
-    "maxSpend": 25
-  }
-}
-```
-
-Repository body:
-
-```json
-{
-  "team": "@s46/engineering",
-  "provider": "github",
-  "installationId": 42,
-  "owner": "sovereign46",
-  "repo": "app",
-  "defaultBranch": "main",
-  "policy": {}
-}
-```
-
-## Jobs and schedules
-
-Job create body:
-
-```json
-{
-  "team": "@s46/engineering",
-  "sessionId": "@dscape/auth-redirect-fix",
-  "kind": "execution",
-  "priority": 0,
-  "region": "EU-OPO",
-  "harness": "pi",
-  "model": "s46/devstral-small-2-24b",
-  "repository": "sovereign46/app",
-  "branch": "main",
-  "maxRuntimeSeconds": 3600,
-  "maxCostMicros": 1000000,
-  "payload": {}
-}
-```
-
-`POST /v1/admin/jobs` and `POST /v1/admin/schedules` return `202 Accepted` with a job object.
-
-Retry body:
-
-```json
-{ "runAfter": "2030-01-01T12:00:00Z" }
-```
-
-Schedule create body is the same as job creation but must include `runAfter`:
-
-```json
-{
-  "team": "@s46/engineering",
-  "sessionId": "@dscape/overnight-refactor",
-  "kind": "execution",
-  "runAfter": "2030-01-01T23:00:00Z",
-  "runBefore": "2030-01-02T07:00:00Z",
-  "maxRuntimeSeconds": 28800,
-  "maxCostMicros": 25000000
-}
-```
-
-Admin log routes are read-only. Workers do not append logs through the admin API.
+{/* OpenAPI coverage: /v1/admin/overview /v1/admin/organizations /v1/admin/organizations/{slug} /v1/admin/organization-members /v1/admin/organization-roles /v1/admin/invite /v1/admin/invites /v1/admin/invite/revoke /v1/admin/people/{email} /v1/admin/people/{email}/teams /v1/admin/people/{email}/teams/{team} /v1/admin/people/{email}/devices/{deviceId}/revoke /v1/admin/people/{email}/invites/resend /v1/admin/people/{email}/audit /v1/admin/harness-policies /v1/admin/harness-policies/{team} /v1/admin/github/installations /v1/admin/repositories /v1/admin/models /v1/admin/model-policies /v1/admin/workers/{id} /v1/admin/workers/{id}/logs /v1/admin/workers/{id}/drain /v1/admin/workers/{id}/revoke /v1/admin/jobs/{id}/logs /v1/admin/jobs/{id}/cancel /v1/admin/jobs/{id}/retry /v1/admin/leases/reconcile /v1/admin/seed */}

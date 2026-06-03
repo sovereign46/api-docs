@@ -5,6 +5,9 @@ const root = new URL('../', import.meta.url);
 const docsDir = new URL('content/docs/', root);
 const docFiles = [
   'index.mdx',
+  'quickstart.mdx',
+  'conventions.mdx',
+  'errors.mdx',
   'operations.mdx',
   'auth.mdx',
   'account.mdx',
@@ -13,7 +16,6 @@ const docFiles = [
   'models.mdx',
   'worker-control.mdx',
   'gateway.mdx',
-  'errors.mdx',
 ];
 
 const [openapi, meta, ...docs] = await Promise.all([
@@ -28,6 +30,9 @@ function hasOpenApiPath(path) {
 }
 
 for (const page of [
+  'quickstart',
+  'conventions',
+  'errors',
   'operations',
   'auth',
   'account',
@@ -36,7 +41,6 @@ for (const page of [
   'models',
   'worker-control',
   'gateway',
-  'errors',
 ]) {
   assert.ok(meta.includes(`"${page}"`), `${page} missing from docs meta`);
 }

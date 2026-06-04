@@ -216,6 +216,127 @@ body::before {
   box-shadow: 6px 6px 0 0 var(--rule-strong);
 }
 
+#nd-subnav [data-search],
+#nd-subnav button[aria-label="Open Sidebar"] {
+  min-width: 40px;
+  min-height: 40px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: 3px 3px 0 0 var(--rule);
+  color: var(--muted);
+  transition-property: background-color, color, box-shadow, transform;
+  transition-duration: 120ms;
+}
+
+#nd-subnav [data-search]:hover,
+#nd-subnav button[aria-label="Open Sidebar"]:hover {
+  background: var(--signal-soft);
+  box-shadow: 5px 5px 0 0 var(--rule-strong);
+  color: var(--ink);
+  transform: translate(-1px, -1px);
+}
+
+#nd-subnav [data-search]:active,
+#nd-subnav button[aria-label="Open Sidebar"]:active {
+  box-shadow: 2px 2px 0 0 var(--rule);
+  transform: translate(0, 0) scale(0.96);
+}
+
+body > [data-state][class*="bg-fd-overlay"] {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--paper) 76%, transparent), color-mix(in oklab, var(--paper) 70%, transparent)),
+    var(--shadow-dither),
+    color-mix(in oklab, var(--ink) 24%, transparent);
+  background-size: auto, 6px 6px, auto;
+  backdrop-filter: blur(2px);
+}
+
+body > [role="dialog"] {
+  border-color: var(--rule-strong) !important;
+  border-radius: 0 !important;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--paper) 96%, transparent), color-mix(in oklab, var(--paper) 88%, var(--rule))),
+    var(--paper) !important;
+  box-shadow: 12px 12px 0 0 var(--rule-strong) !important;
+  font-family: var(--sans);
+}
+
+body > [role="dialog"] > * {
+  border-color: var(--rule) !important;
+}
+
+body > [role="dialog"] input {
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+body > [role="dialog"] input::placeholder {
+  color: var(--muted);
+}
+
+body > [role="dialog"] button {
+  border-radius: 0 !important;
+}
+
+body > [role="dialog"] button[aria-label="Close Search"] {
+  min-width: 40px;
+  min-height: 32px;
+  border-color: var(--rule-strong);
+  background: var(--surface);
+  box-shadow: 3px 3px 0 0 var(--rule);
+  color: var(--muted);
+  font-family: var(--mono);
+  transition-property: background-color, color, box-shadow, transform;
+  transition-duration: 120ms;
+}
+
+body > [role="dialog"] button[aria-label="Close Search"]:hover {
+  background: var(--signal-soft);
+  box-shadow: 5px 5px 0 0 var(--rule-strong);
+  color: var(--ink);
+  transform: translate(-1px, -1px);
+}
+
+body > [role="dialog"] button[aria-label="Close Search"]:active {
+  box-shadow: 2px 2px 0 0 var(--rule);
+  transform: translate(0, 0) scale(0.96);
+}
+
+body > [role="dialog"] button[aria-selected] {
+  border: 1px solid transparent;
+  border-radius: 0 !important;
+  font-family: var(--sans);
+  transition-property: background-color, border-color, color, transform;
+  transition-duration: 120ms;
+}
+
+body > [role="dialog"] button[aria-selected="true"] {
+  border-color: var(--line-2);
+  background: var(--signal-soft);
+  box-shadow: inset 3px 0 0 var(--signal);
+  color: var(--ink);
+}
+
+body > [role="dialog"] button[aria-selected]:active {
+  transform: scale(0.96);
+}
+
+body > [role="dialog"] [data-active] {
+  border-radius: 0 !important;
+  font-family: var(--mono);
+}
+
+body > div[class*="bg-fd-secondary"][class*="empty:hidden"] {
+  border: 1px solid var(--rule-strong);
+  border-top: 0;
+  border-radius: 0 !important;
+  background: var(--surface-2);
+  box-shadow: 12px 12px 0 0 var(--rule-strong);
+}
+
 #nd-sidebar a[data-active="true"] {
   border-radius: 0;
   box-shadow: inset 3px 0 0 var(--signal);

@@ -15,3 +15,7 @@ Open `http://localhost:3000/docs`. The OpenAPI document is served at `http://loc
 The docs track the production contract in `s46-api` and intentionally use canonical `@org/team` team ids, `region` terminology, and `https://gateway.s46.dev` harness routing.
 
 The production hostname is `docs.s46.dev`. The Dockerfile builds the Next app for the `docs` stack in `~/dev/s46-infra`.
+
+## License
+
+This repository is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

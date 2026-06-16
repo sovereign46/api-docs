@@ -1,12 +1,12 @@
 ---
 title: Models
-description: Discover certified models and manage each team's allow-list and default.
+description: Certify S46 models, publish registry releases, and manage each team's allow-list.
 ---
 
-Discover certified models and manage each team's allow-list and default. Policy set here is what the [harness gateway](/docs/gateway) enforces at call time.
+Certify S46 models, publish registry releases, and manage each team's allow-list. Policy set here is what the [harness gateway](/docs/gateway) enforces at call time.
 
 <Note tag="Authoritative schema">
-  Field shapes below mirror the gateway's model objects; the exhaustive policy schema is in `/openapi.json`. Admin model routes require an owner or admin role.
+  Field shapes below mirror `/openapi.json`. Admin model routes require an owner or admin role. API-backed certification is the release control plane; gateway serving still fails closed against the verified `models.s46.dev` registry mirror plus `team_model_policies`.
 </Note>
 
 <RouteIndex page="models" />
@@ -15,15 +15,64 @@ Discover certified models and manage each team's allow-list and default. Policy 
 
 | Method | Route | Purpose |
 | --- | --- | --- |
+| `GET` | `/v1/admin/model-releases` | List API-backed model releases. |
+| `POST` | `/v1/admin/model-releases` | Create a model release. |
+| `GET` | `/v1/admin/model-releases/{releaseId}` | Read release state and evidence. |
+| `POST` | `/v1/admin/model-releases/{releaseId}/upload-session` | Open a quarantine upload session. |
+| `POST` | `/v1/admin/model-releases/{releaseId}/finalize-upload` | Finalize artifact metadata into quarantine CAS. |
+| `POST` | `/v1/admin/model-releases/{releaseId}/validate` | Queue S46 certification worker validation. |
+| `POST` | `/v1/admin/model-releases/{releaseId}/publish` | Queue the registry publisher. |
+| `POST` | `/v1/admin/model-releases/{releaseId}/yank` | Block serving and queue a signed yank. |
 | `GET` | `/v1/admin/models` | List certified models the org may allow. |
 | `GET` | `/v1/admin/model-policies?team={team}` | Read a team's allow-list and default model. |
 | `PUT` | `/v1/admin/model-policies?team={team}` | Set a team's allow-list and default model. |
+
+## Model release lifecycle
+
+<Method method="POST" path="/v1/admin/model-releases" returns="201" />
+<Method method="POST" path="/v1/admin/model-releases/{releaseId}/upload-session" returns="201" />
+<Method method="POST" path="/v1/admin/model-releases/{releaseId}/finalize-upload" returns="200" />
+<Method method="POST" path="/v1/admin/model-releases/{releaseId}/validate" returns="202" />
+<Method method="POST" path="/v1/admin/model-releases/{releaseId}/publish" returns="202" />
+<Method method="POST" path="/v1/admin/model-releases/{releaseId}/yank" returns="202" />
+
+The API creates release records and queues model-worker jobs; it does not treat an uploaded artifact as certified until a certification worker reports green evidence with threshold signatures.
+
+1. `POST /v1/admin/model-releases` creates `staged` state for `{ namespace, team, modelSlug }`.
+2. `POST /v1/admin/model-releases/{releaseId}/upload-session` returns a `PUT` upload URL for the expected SHA-256 and size.
+3. `POST /v1/admin/model-releases/{releaseId}/finalize-upload` records quarantine CAS metadata under `S46_MODEL_QUARANTINE_URI`.
+4. `POST /v1/admin/model-releases/{releaseId}/validate` queues a `model.certify` job for workers with `model_certification`.
+5. Worker completion stores green verification evidence, private-holdout suite metadata, threshold-signing records, and Sigsum status.
+6. `POST /v1/admin/model-releases/{releaseId}/publish` queues `model.publish` for workers with `model_registry_publish`; the publisher writes content-addressed artifacts and flips the signed registry index.
+7. `POST /v1/admin/model-releases/{releaseId}/yank` sets `servingBlocked=true` immediately, updates the local catalog mirror to fail closed, and queues `model.yank` for signed advisory/yank publication.
+
+All mutating release actions after create require `If-Match`; retryable actions also require `Idempotency-Key`.
+
+```bash
+curl -X POST https://api.s46.dev/v1/admin/model-releases \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"namespace":"s46","team":"@s46/engineering","modelSlug":"devstral-small-2-24b"}'
+```
+
+```json
+{
+  "id": "rel_...",
+  "namespace": "s46",
+  "teamSlug": "@s46/engineering",
+  "modelId": "s46/devstral-small-2-24b",
+  "version": "r000001",
+  "state": "staged",
+  "revision": 1,
+  "etag": "\"1\""
+}
+```
 
 ## Certified models
 
 <Method method="GET" path="/v1/admin/models" returns="200" />
 
-The certified catalog. Each model carries a verification state — only `certified` / `trusted` models may be added to a team allow-list.
+The certified catalog is still the serving gate. Each model must be certified, published, trusted, and not globally blocked by advisory/yank state before the gateway can serve it.
 
 <EndpointMeta>Auth · **owner / admin**</EndpointMeta>
 
@@ -32,27 +81,17 @@ curl https://api.s46.dev/v1/admin/models \
   -H "Authorization: Bearer $S46_ACCESS_TOKEN"
 ```
 
-```ts
-const { data } = await fetch("https://api.s46.dev/v1/admin/models", {
-  headers: { Authorization: `Bearer ${accessToken}` },
-}).then((r) => r.json());
-```
-
-```py
-models = requests.get("https://api.s46.dev/v1/admin/models",
-                      headers={"Authorization": f"Bearer {access_token}"}).json()
-```
-
 ```json
 {
-  "data": [
+  "models": [
     {
       "id": "s46/devstral-small-2-24b",
-      "displayName": "Devstral Small 2 24B",
-      "ownedBy": "sovereign46",
+      "displayName": "s46/devstral-small-2-24b",
+      "provider": "s46",
       "certified": true,
       "published": true,
-      "verificationState": "trusted"
+      "verificationState": "trusted",
+      "sigsumStatus": "verified"
     }
   ]
 }
@@ -63,59 +102,31 @@ models = requests.get("https://api.s46.dev/v1/admin/models",
 <Method method="GET" path="/v1/admin/model-policies?team={team}" returns="200" />
 <Method method="PUT" path="/v1/admin/model-policies?team={team}" returns="200" />
 
-A team's `allow` list determines which models the gateway will serve for that team; `default` is used when a gateway request omits `model`. A request for a model outside the allow-list fails at the gateway with `403 model_not_allowed`.
+A team's policy determines which certified models the gateway will serve for that team. A request for a model outside the allow-list fails at the gateway with `403 model_not_allowed`.
 
-<EndpointMeta>Auth · **owner / admin** · Schema · **illustrative**</EndpointMeta>
+<EndpointMeta>Auth · **owner / admin**</EndpointMeta>
 
 ```bash
-# Read the current policy
 curl "https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering" \
   -H "Authorization: Bearer $S46_ACCESS_TOKEN"
 
-# Set the allow-list and default
-curl -X PUT "https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering" \
+curl -X PUT "https://api.s46.dev/v1/admin/model-policies" \
   -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "default": "s46/devstral-small-2-24b",
-    "allow": ["s46/devstral-small-2-24b"]
-  }'
-```
-
-```ts
-await fetch(
-  "https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering",
-  {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      default: "s46/devstral-small-2-24b",
-      allow: ["s46/devstral-small-2-24b"],
-    }),
-  },
-);
-```
-
-```py
-requests.put(
-    "https://api.s46.dev/v1/admin/model-policies",
-    params={"team": "@s46/engineering"},
-    headers={"Authorization": f"Bearer {access_token}"},
-    json={"default": "s46/devstral-small-2-24b",
-          "allow": ["s46/devstral-small-2-24b"]},
-)
+  -H "Idempotency-Key: policy-$(uuidgen)" \
+  -d '{"team":"@s46/engineering","modelId":"s46/devstral-small-2-24b","allowed":true}'
 ```
 
 ```json
 {
   "team": "@s46/engineering",
-  "default": "s46/devstral-small-2-24b",
-  "allow": ["s46/devstral-small-2-24b"]
+  "modelId": "s46/devstral-small-2-24b",
+  "allowed": true,
+  "revision": 1,
+  "etag": "\"1\""
 }
 ```
 
 <Note tag="Resolution">
   Consumers should read the effective list from `GET /v1/teams/{team}` (`defaultModel` + `models`) rather than hard-coding model ids.
 </Note>
-
-{/* OpenAPI coverage: PATCH /v1/admin/model-policies. Registry verification fails closed; production authorization checks team_model_policies before serving a model. Idempotency-Key is accepted on model policy mutations. */}

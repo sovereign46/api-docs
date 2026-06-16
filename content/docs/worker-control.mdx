@@ -3,7 +3,7 @@ title: Worker control
 description: Register workers, heartbeat, lease jobs, acknowledge leases, and report completion.
 ---
 
-The protocol infrastructure implements to run work: register a worker, heartbeat, lease jobs, acknowledge the lease, and report completion. For building clients you do not need this — it is for operators running the fleet.
+The protocol infrastructure implements to run work: register a worker, heartbeat, lease jobs, acknowledge the lease, and report completion. For building clients you do not need this — it is for operators running the fleet. API-backed model certification uses the same worker lease path with `kind: "model"` jobs and capability gates (`model_certification`, `model_registry_publish`).
 
 <Note tag="Authoritative schema">
   This page describes the worker lifecycle and route groups. The exact lease/job payload schema is in `/openapi.json` — treat it as the source of truth for field names.
@@ -17,9 +17,9 @@ The protocol infrastructure implements to run work: register a worker, heartbeat
 | --- | --- | --- |
 | `POST` | `/v1/worker/register` | Register a worker and its capabilities; receive a worker credential. |
 | `POST` | `/v1/worker/heartbeat` | Report liveness and current state. |
-| `POST` | `/v1/worker/lease` | Lease the next compatible job. |
-| `POST` | `/v1/worker/lease/{jobId}/ack` | Acknowledge a lease before starting work. |
-| `POST` | `/v1/worker/jobs/{jobId}/complete` | Report success or failure for a job. |
+| `POST` | `/v1/worker/jobs/lease` | Lease the next compatible job. |
+| `POST` | `/v1/internal/leases/ack` | Acknowledge a lease before starting work. |
+| `POST` | `/v1/worker/jobs/complete` | Report success or failure for a job. |
 | `·` | `/v1/internal/*` | Operator-only controls for the worker/job runtime. |
 
 ## Lease lifecycle
@@ -42,25 +42,25 @@ Ack the lease to take ownership before starting. Unacknowledged leases expire an
 
 ### Complete
 
-Report success or failure. Failures may be retried by the scheduler depending on job policy.
+Report success or failure. Failures may be retried by the scheduler depending on job policy. For `model.certify`, completion includes green evidence and threshold signatures; for `model.publish` it includes registry publication metadata; for `model.yank` it completes the signed yank log step.
 
 ## Lease a job
 
-<Method method="POST" path="/v1/worker/lease" returns="200 / 428" />
+<Method method="POST" path="/v1/worker/jobs/lease" returns="200 / 428" />
 
 Returns a job to run, or `428 authorization_pending` when no compatible work is available. Branch on endpoint context — here, `authorization_pending` means "nothing to lease right now."
 
 <EndpointMeta>Auth · **worker credential** · Schema · **illustrative**</EndpointMeta>
 
 ```bash
-curl -X POST https://api.s46.dev/v1/worker/lease \
+curl -X POST https://api.s46.dev/v1/worker/jobs/lease \
   -H "Authorization: Bearer $S46_WORKER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "workerId": "worker_01", "capabilities": ["chat", "code"] }'
 ```
 
 ```ts
-const res = await fetch("https://api.s46.dev/v1/worker/lease", {
+const res = await fetch("https://api.s46.dev/v1/worker/jobs/lease", {
   method: "POST",
   headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
   body: JSON.stringify({ workerId: "worker_01", capabilities: ["chat", "code"] }),
@@ -69,7 +69,7 @@ const job = res.status === 200 ? await res.json() : null; // 428 = no work
 ```
 
 ```py
-res = requests.post("https://api.s46.dev/v1/worker/lease",
+res = requests.post("https://api.s46.dev/v1/worker/jobs/lease",
                     headers={"Authorization": f"Bearer {worker_token}"},
                     json={"workerId": "worker_01", "capabilities": ["chat", "code"]})
 job = res.json() if res.status_code == 200 else None  # 428 = no work
@@ -92,38 +92,39 @@ job = res.json() if res.status_code == 200 else None  # 428 = no work
 
 ## Complete a job
 
-<Method method="POST" path="/v1/worker/jobs/{jobId}/complete" returns="200" />
+<Method method="POST" path="/v1/worker/jobs/complete" returns="200" />
 
-Report the outcome. `{jobId}` must be URL path-escaped.
+Report the outcome with `workerId`, `jobId`, `leaseId`, and `completion` in the JSON body.
 
 <EndpointMeta>Auth · **worker credential** · Schema · **illustrative**</EndpointMeta>
 
 ```bash
-curl -X POST https://api.s46.dev/v1/worker/jobs/job_01J.../complete \
+curl -X POST https://api.s46.dev/v1/worker/jobs/complete \
   -H "Authorization: Bearer $S46_WORKER_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{ "status": "succeeded", "ranOn": ["worker_01"], "cost": "€0.00" }'
+  -d '{"workerId":"worker_01","jobId":"job_01J...","leaseId":"lease_01J...","completion":{"state":"succeeded","payload":{"ok":true}}}'
 ```
 
 ```ts
-await fetch(`https://api.s46.dev/v1/worker/jobs/${jobId}/complete`, {
+await fetch("https://api.s46.dev/v1/worker/jobs/complete", {
   method: "POST",
   headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ status: "succeeded", ranOn: ["worker_01"], cost: "€0.00" }),
+  body: JSON.stringify({ workerId: "worker_01", jobId, leaseId, completion: { state: "succeeded", payload: { ok: true } } }),
 });
 ```
 
 ```py
-requests.post(f"https://api.s46.dev/v1/worker/jobs/{job_id}/complete",
+requests.post("https://api.s46.dev/v1/worker/jobs/complete",
               headers={"Authorization": f"Bearer {worker_token}"},
-              json={"status": "succeeded", "ranOn": ["worker_01"], "cost": "€0.00"})
+              json={"workerId": "worker_01", "jobId": job_id, "leaseId": lease_id, "completion": {"state": "succeeded", "payload": {"ok": True}}})
 ```
 
 ```json
 {
-  "status": "succeeded",
-  "ranOn": ["worker_01"],
-  "cost": "€0.00"
+  "workerId": "worker_01",
+  "jobId": "job_01J...",
+  "leaseId": "lease_01J...",
+  "completion": {"state": "succeeded", "payload": {"ok": true}}
 }
 ```
 

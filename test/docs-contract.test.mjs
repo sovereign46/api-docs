@@ -95,6 +95,13 @@ const exposedPaths = [
   '/v1/admin/harness-policies/{team}',
   '/v1/admin/github/installations',
   '/v1/admin/repositories',
+  '/v1/admin/model-releases',
+  '/v1/admin/model-releases/{releaseId}',
+  '/v1/admin/model-releases/{releaseId}/upload-session',
+  '/v1/admin/model-releases/{releaseId}/finalize-upload',
+  '/v1/admin/model-releases/{releaseId}/validate',
+  '/v1/admin/model-releases/{releaseId}/publish',
+  '/v1/admin/model-releases/{releaseId}/yank',
   '/v1/admin/models',
   '/v1/admin/model-policies',
   '/v1/admin/workers',
@@ -135,18 +142,6 @@ for (const route of exposedPaths.filter((path) => !['/v1/devices/{deviceId}'].in
   assert.ok(docsText.includes(route), `${route} missing from docs`);
 }
 assert.match(docsText, /DELETE` \| `\/v1\/devices\/\{deviceId\}`/);
-
-for (const unsupported of [
-  '/v1/admin/model-releases',
-  '/v1/admin/model-releases/{releaseId}',
-  '/v1/admin/model-releases/{releaseId}/upload-session',
-  '/v1/admin/model-releases/{releaseId}/finalize-upload',
-  '/v1/admin/model-releases/{releaseId}/validate',
-  '/v1/admin/model-releases/{releaseId}/publish',
-  '/v1/admin/model-releases/{releaseId}/yank',
-]) {
-  assert.ok(!hasOpenApiPath(unsupported), `${unsupported} should not be in OpenAPI until s46-api exposes it`);
-}
 
 assert.ok(!openapi.includes("post: adminWrite('Create model catalog entry'"), 'model catalog mutations are not exposed');
 assert.ok(!openapi.includes("put: adminWrite('Update model catalog entry'"), 'model catalog mutations are not exposed');

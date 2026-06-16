@@ -498,6 +498,28 @@ const openapi = {
       get: adminGet('List repositories', 'listRepositories', collection('repositories', ref('TeamRepository')), [queryParam('team', 'Canonical team id')]),
       post: adminWrite('Save repository', 'saveRepository', ref('TeamRepository'), ref('TeamRepository')),
     },
+    '/v1/admin/model-releases': {
+      get: modelAdminGet('List API-backed model releases', 'listModelReleases', collection('modelReleases', ref('ModelRelease')), [queryParam('namespace', 'Model namespace'), queryParam('team', 'Canonical team id'), queryParam('state', 'Release state')]),
+      post: modelAdminWrite('Create model release', 'createModelRelease', ref('CreateModelReleaseRequest'), ref('ModelRelease'), '201'),
+    },
+    '/v1/admin/model-releases/{releaseId}': {
+      get: modelAdminGet('Get model release', 'getModelRelease', ref('ModelRelease'), [pathParam('releaseId', 'Model release id', 'rel_...')]),
+    },
+    '/v1/admin/model-releases/{releaseId}/upload-session': {
+      post: modelAdminWrite('Create model upload session', 'createModelUploadSession', ref('ModelUploadSessionRequest'), ref('ModelUploadSessionResponse'), '201', [pathParam('releaseId', 'Model release id', 'rel_...'), headerParam('If-Match', 'Known release ETag/revision', true)]),
+    },
+    '/v1/admin/model-releases/{releaseId}/finalize-upload': {
+      post: modelAdminWrite('Finalize model upload into quarantine CAS metadata', 'finalizeModelUpload', ref('FinalizeModelUploadRequest'), ref('ModelRelease'), '200', [pathParam('releaseId', 'Model release id', 'rel_...'), headerParam('If-Match', 'Known release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)]),
+    },
+    '/v1/admin/model-releases/{releaseId}/validate': {
+      post: modelAdminWrite('Queue model certification', 'queueModelCertification', ref('ModelValidationRequest'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Model release id', 'rel_...'), headerParam('If-Match', 'Known release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)]),
+    },
+    '/v1/admin/model-releases/{releaseId}/publish': {
+      post: modelAdminWrite('Queue registry publication', 'queueModelPublication', ref('ModelPublishRequest'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Model release id', 'rel_...'), headerParam('If-Match', 'Known release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)]),
+    },
+    '/v1/admin/model-releases/{releaseId}/yank': {
+      post: modelAdminWrite('Queue signed model yank and block serving', 'queueModelYank', ref('ModelYankRequest'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Model release id', 'rel_...'), headerParam('If-Match', 'Known release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)]),
+    },
     '/v1/admin/models': {
       get: modelAdminGet('List verified model catalog', 'listModels', ref('ModelCatalogResponse'), [queryParam('organization', 'Organization slug'), queryParam('team', 'Canonical team id')]),
     },
@@ -931,6 +953,49 @@ function buildSchemas() {
       properties: {
         models: { type: 'array', items: ref('ModelCatalogEntry') },
         modelPolicies: { type: 'array', items: ref('TeamModelPolicy') },
+      },
+    },
+    CreateModelReleaseRequest: {
+      type: 'object',
+      required: ['namespace', 'team', 'modelSlug'],
+      properties: { namespace: { type: 'string' }, team: { type: 'string' }, modelSlug: { type: 'string' } },
+    },
+    ModelArtifact: {
+      type: 'object',
+      properties: {
+        digest: { type: 'string' }, sha256: { type: 'string' }, size: { type: 'integer' }, contentType: { type: 'string' }, filename: { type: 'string' }, storageUri: { type: 'string' }, quarantineUri: { type: 'string' }, casUri: { type: 'string' }, uploadedAt: timestamp,
+      },
+    },
+    ModelUploadSessionRequest: {
+      type: 'object',
+      required: ['artifact'],
+      properties: { artifact: { type: 'object', required: ['sha256', 'size'], properties: { sha256: { type: 'string' }, size: { type: 'integer' }, contentType: { type: 'string' }, filename: { type: 'string' }, partCount: { type: 'integer' } } } },
+    },
+    ModelUploadSession: {
+      type: 'object',
+      properties: { id: { type: 'string' }, releaseId: { type: 'string' }, namespace: { type: 'string' }, modelSlug: { type: 'string' }, artifactDigest: { type: 'string' }, artifactSize: { type: 'integer' }, uploadUrl: { type: 'string' }, method: { type: 'string' }, headers: { type: 'object', additionalProperties: { type: 'string' } }, state: { type: 'string' }, expiresAt: timestamp, createdAt: timestamp, finalizedAt: timestamp },
+    },
+    ModelUploadSessionResponse: { type: 'object', properties: { uploadSession: ref('ModelUploadSession'), modelRelease: ref('ModelRelease') } },
+    FinalizeModelUploadRequest: { type: 'object', required: ['uploadSessionId', 'sha256', 'size'], properties: { uploadSessionId: { type: 'string' }, sha256: { type: 'string' }, size: { type: 'integer' } } },
+    ModelValidationRequest: { type: 'object', properties: { estimatedGpuHours: { type: 'integer' } } },
+    ModelPublishRequest: { type: 'object', properties: {} },
+    ModelYankRequest: { type: 'object', properties: { reason: { type: 'string' } } },
+    ModelCertificationRecord: {
+      type: 'object',
+      properties: {
+        schema: { type: 'string' }, releaseId: { type: 'string' }, modelId: { type: 'string' }, version: { type: 'string' }, artifactDigest: { type: 'string' }, artifactSize: { type: 'integer' }, backendModel: { type: 'string' }, result: { type: 'string' }, summary: { type: 'string' }, sigsumStatus: { type: 'string' }, transparencyLogUrl: { type: 'string' }, createdAt: timestamp,
+        verificationSuite: { type: 'object', properties: { version: { type: 'string' }, runnerImageDigest: { type: 'string' }, policyDigest: { type: 'string' }, privateHoldoutSetId: { type: 'string' } } },
+        evidenceDigests: { type: 'array', items: { type: 'string' } },
+        thresholdSignatures: { type: 'object', properties: { subjectDigest: { type: 'string' }, threshold: { type: 'integer' }, state: { type: 'string' }, signatures: { type: 'array', items: { type: 'object', properties: { keyId: { type: 'string' }, signer: { type: 'string' }, signatureDigest: { type: 'string' }, signedAt: timestamp } } } } },
+      },
+    },
+    ModelPublicationRecord: { type: 'object', properties: { schema: { type: 'string' }, releaseId: { type: 'string' }, modelId: { type: 'string' }, version: { type: 'string' }, artifactUrl: { type: 'string' }, manifestUrl: { type: 'string' }, indexUrl: { type: 'string' }, registryRef: { type: 'string' }, sigsumStatus: { type: 'string' }, publishedAt: timestamp } },
+    ModelYankRecord: { type: 'object', properties: { schema: { type: 'string' }, releaseId: { type: 'string' }, modelId: { type: 'string' }, version: { type: 'string' }, artifactDigest: { type: 'string' }, releaseCertificateDigest: { type: 'string' }, reason: { type: 'string' }, effectiveAt: timestamp, loggedAt: timestamp } },
+    ModelRelease: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' }, schema: { type: 'string' }, namespace: { type: 'string' }, organizationSlug: { type: 'string' }, teamSlug: { type: 'string' }, modelSlug: { type: 'string' }, modelId: { type: 'string' }, version: { type: 'string' }, state: { type: 'string', enum: ['staged', 'certifying', 'certified', 'publishing', 'published', 'yanking', 'yanked', 'failed'] }, backendModel: { type: 'string' }, servingBlocked: { type: 'boolean' }, certificationJobId: { type: 'string' }, publishJobId: { type: 'string' }, yankJobId: { type: 'string' }, estimatedGpuHours: { type: 'integer' }, verificationError: { type: 'string' }, createdBy: { type: 'string' }, updatedBy: { type: 'string' }, revision: { type: 'integer' }, etag: { type: 'string' }, createdAt: timestamp, updatedAt: timestamp, certificationQueuedAt: timestamp, publishQueuedAt: timestamp, yankRequestedAt: timestamp,
+        artifact: ref('ModelArtifact'), certification: ref('ModelCertificationRecord'), publication: ref('ModelPublicationRecord'), yank: ref('ModelYankRecord'),
       },
     },
     TeamModelPolicy: {

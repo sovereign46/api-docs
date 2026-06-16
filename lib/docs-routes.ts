@@ -41,6 +41,9 @@ export const routeIndex = {
     { method: 'GET', path: 'usage / audit', href: '#usage--audit', description: 'Reports and audit log.' },
   ],
   models: [
+    { method: 'GET', path: '/v1/admin/model-releases', href: '#model-release-lifecycle', description: 'List API-backed model releases.' },
+    { method: 'POST', path: '/v1/admin/model-releases', href: '#model-release-lifecycle', description: 'Create a model release.' },
+    { method: 'POST', path: '/v1/admin/model-releases/{releaseId}/validate', href: '#model-release-lifecycle', description: 'Queue certification.' },
     { method: 'GET', path: '/v1/admin/models', href: '#certified-models', description: 'List certified models.' },
     { method: 'GET', path: '/v1/admin/model-policies', href: '#team-model-policy', description: 'Read team policy.' },
     { method: 'PUT', path: '/v1/admin/model-policies', href: '#team-model-policy', description: 'Set team policy.' },

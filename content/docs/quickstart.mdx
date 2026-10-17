@@ -1,223 +1,77 @@
 ---
 title: Quickstart
-description: Go from an invite to your first model call with the CLI or raw HTTP.
+description: Authenticate, resolve your team's authorized models, and call the gateway.
 ---
 
-Go from an invite to your **first model call**. Use the CLI if you just want to make requests; drop to raw HTTP when you are building a client.
+Your email must have an active invitation for the target organization/team; otherwise login returns `403 not_invited`.
 
-<Note tag="Before you start">
-  s46 is invite-gated. Your work email must already have an active invitation for the target org/team, or login fails with `403 not_invited`. Ask an org admin to invite you first.
-</Note>
-
-## Fastest path — the CLI
-
-The CLI runs the whole device flow for you and stores device-bound credentials, so you can authenticate once and skip the raw HTTP handshake below. Install it with Homebrew:
+## CLI login
 
 ```bash
 brew install sovereign46/tap/s46
-```
-
-```bash
-# Opens your browser, approves the device, and stores credentials
 s46 login --email you@s46.dev
 ```
 
-<Note tag="Note">
-  Run `s46 --help` for the full command set. Once you are logged in, the credentials it stores are the same bearer/refresh tokens used in the raw HTTP flow below.
-</Note>
+The CLI handles device login and stores device-bound credentials. Use `s46 --help` for the commands in your installed release. For a custom client, follow the HTTP flow below.
 
-## Build it yourself — raw HTTP
+## Start and approve login
 
-If you are writing your own client, here is the same flow over plain HTTP. Five steps: start → approve → poll → identify → call a model.
+```bash
+curl -X POST https://api.s46.dev/v1/auth/device/start \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@s46.dev","deviceId":"dev-laptop","deviceName":"Dev laptop"}'
+```
 
-<Steps>
-  <Step number="1" title="Start the device login">
-    Request a device code. You get back a short `userCode` for the human to approve and a `deviceCode` your client polls with.
+The response includes `deviceCode`, `userCode`, `verificationUri`, `intervalSeconds`, and `expiresAt`. Open `verificationUri` and complete browser approval. A GET validates but does not consume a magic-link token; approval requires POST.
 
-    ```bash
-    curl -X POST https://api.s46.dev/v1/auth/device/start \
-      -H "Content-Type: application/json" \
-      -d '{
-        "email": "you@s46.dev",
-        "deviceId": "dev-laptop",
-        "deviceName": "Dev laptop"
-      }'
-    ```
+## Poll for credentials
 
-    ```ts
-    const res = await fetch("https://api.s46.dev/v1/auth/device/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: "you@s46.dev",
-        deviceId: "dev-laptop",
-        deviceName: "Dev laptop",
-      }),
-    });
-    const start = await res.json();
-    console.log(start.verificationUri); // send the user here
-    ```
+Poll no faster than the returned `intervalSeconds`:
 
-    ```py
-    import requests
+```bash
+curl -X POST https://api.s46.dev/v1/auth/device/poll \
+  -H 'Content-Type: application/json' \
+  -d '{"deviceCode":"s46_device_..."}'
+```
 
-    res = requests.post("https://api.s46.dev/v1/auth/device/start", json={
-        "email": "you@s46.dev",
-        "deviceId": "dev-laptop",
-        "deviceName": "Dev laptop",
-    })
-    start = res.json()
-    print(start["verificationUri"])  # send the user here
-    ```
+`428 authorization_pending` means wait; `200` returns `accessToken`, `refreshToken`, and `expiresAt` plus account/team/device identity. Persist both tokens securely and save the newest rotating refresh token. See [Auth](/docs/auth) for complete login and refresh contracts.
 
-    ```json
-    {
-      "deviceCode": "s46_device_...",
-      "userCode": "WXYZ-1234",
-      "verificationUri": "https://api.s46.dev/v1/auth/magic/consume?token=...",
-      "intervalSeconds": 2,
-      "expiresAt": "2030-01-01T12:00:00Z"
-    }
-    ```
-  </Step>
+## Call the gateway
 
-  <Step number="2" title="Approve in the browser">
-    Open `verificationUri`. The user signs in via magic link or passkey and approves the pending device. The `GET` page validates but does *not* consume the token, so email scanners can't approve a login on the user's behalf.
-  </Step>
+Use the access token to resolve identity and then the team's authorized models. This example checks HTTP failures before using JSON and refuses an unavailable configured default rather than silently choosing another model:
 
-  <Step number="3" title="Poll for the token set">
-    Poll no faster than `intervalSeconds`. `428 authorization_pending` means keep waiting; `200` returns your credentials. Polling too fast earns `429 rate_limited`.
+```js
+const accessToken = process.env.S46_ACCESS_TOKEN;
+if (!accessToken) throw new Error("Set S46_ACCESS_TOKEN to your access token");
 
-    ```bash
-    curl -X POST https://api.s46.dev/v1/auth/device/poll \
-      -H "Content-Type: application/json" \
-      -d '{ "deviceCode": "s46_device_..." }'
-    ```
+async function request(url, body) {
+  const response = await fetch(url, {
+    method: body ? "POST" : "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+  return response.json();
+}
 
-    ```ts
-    async function poll(deviceCode, intervalSeconds) {
-      for (;;) {
-        const res = await fetch("https://api.s46.dev/v1/auth/device/poll", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deviceCode }),
-        });
-        if (res.status === 200) return res.json();          // token set
-        if (res.status !== 428) throw new Error(await res.text());
-        await new Promise((r) => setTimeout(r, intervalSeconds * 1000));
-      }
-    }
-    const tokens = await poll(start.deviceCode, start.intervalSeconds);
-    ```
+const me = await request("https://api.s46.dev/v1/me");
+const team = await request(
+  `https://api.s46.dev/v1/teams/${encodeURIComponent(me.team)}`,
+);
+if (!team.models.includes(team.defaultModel)) {
+  throw new Error("Choose an authorized model or ask an admin to update the default");
+}
+const completion = await request(
+  `${team.endpoint.replace(/\/$/, "")}/v1/chat/completions`,
+  {
+    model: team.defaultModel,
+    messages: [{ role: "user", content: "Write a short status update." }],
+  },
+);
+console.log(completion.choices[0].message.content);
+```
 
-    ```py
-    import time
-
-    while True:
-        res = requests.post("https://api.s46.dev/v1/auth/device/poll",
-                            json={"deviceCode": start["deviceCode"]})
-        if res.status_code == 200:
-            tokens = res.json()
-            break
-        if res.status_code != 428:
-            res.raise_for_status()
-        time.sleep(start["intervalSeconds"])
-    ```
-
-    ```json
-    {
-      "account": "you@s46.dev",
-      "organization": "s46",
-      "team": "@s46/engineering",
-      "deviceId": "dev-laptop",
-      "accessToken": "s46_access_...",
-      "refreshToken": "s46_refresh_...",
-      "expiresAt": "2030-01-01T13:00:00Z"
-    }
-    ```
-
-    <Note tag="Store both">
-      Access tokens are short-lived; refresh tokens are device-bound and rotate. Always persist the newest `refreshToken` the API returns — see [Refresh](/docs/auth#refresh).
-    </Note>
-  </Step>
-
-  <Step number="4" title="Identify the caller">
-    Use the access token as a bearer credential. `GET /v1/me` returns the identity, team, role, and region behind the token — this is your first authenticated control-plane request.
-
-    ```bash
-    curl https://api.s46.dev/v1/me \
-      -H "Authorization: Bearer $S46_ACCESS_TOKEN"
-    ```
-
-    ```ts
-    const me = await fetch("https://api.s46.dev/v1/me", {
-      headers: { Authorization: `Bearer ${tokens.accessToken}` },
-    }).then((r) => r.json());
-    // → { email, organization, team, role, region, deviceId }
-    ```
-
-    ```py
-    me = requests.get(
-        "https://api.s46.dev/v1/me",
-        headers={"Authorization": f"Bearer {tokens['accessToken']}"},
-    ).json()
-    ```
-  </Step>
-
-  <Step number="5" title="Make your first model call">
-    Call the gateway with the same bearer token. The gateway resolves your team, enforces model policy, and picks the team default when you omit `model`. The routes are OpenAI-, Anthropic-, and Codex-compatible.
-
-    ```bash
-    curl -X POST https://gateway.s46.dev/v1/chat/completions \
-      -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "model": "s46/devstral-small-2-24b",
-        "messages": [
-          { "role": "user", "content": "Write a short status update." }
-        ]
-      }'
-    ```
-
-    ```ts
-    // Drop-in for the OpenAI SDK — just swap the base URL.
-    import OpenAI from "openai";
-
-    const client = new OpenAI({
-      apiKey: tokens.accessToken,
-      baseURL: "https://gateway.s46.dev/v1",
-    });
-
-    const completion = await client.chat.completions.create({
-      model: "s46/devstral-small-2-24b",
-      messages: [{ role: "user", content: "Write a short status update." }],
-    });
-    ```
-
-    ```py
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=tokens["accessToken"],
-        base_url="https://gateway.s46.dev/v1",
-    )
-
-    completion = client.chat.completions.create(
-        model="s46/devstral-small-2-24b",
-        messages=[{"role": "user", "content": "Write a short status update."}],
-    )
-    ```
-
-    <Note tag="Streaming">
-      Set `"stream": true` to receive `text/event-stream` chunks. OpenAI chat-completion streams terminate with `[DONE]`. Anthropic and Codex routes are available at `/anthropic/v1/messages` and `/codex/v1/responses`.
-    </Note>
-  </Step>
-</Steps>
-
-## Where to go next
-
-<Cards columns={3}>
-  <Card href="/docs/conventions" eyebrow="Platform" title="Conventions" description="Rate limits, idempotency, pagination, versioning." cta="Read →" />
-  <Card href="/docs/auth" eyebrow="Reference" title="Auth" description="Every auth route, field, and failure mode." cta="Browse →" />
-  <Card href="/docs/errors" eyebrow="Contract" title="Errors" description="The full status and code catalog." cta="Look up →" />
-</Cards>
+Raw HTTP may omit `model` to request the configured team default; it still must be allowed and servable. For streaming, protocol subsets, output limits, and availability failures, see [Gateway](/docs/gateway). Runtime hints are returned in [team metadata](/docs/teams-sessions); do not hard-code model limits.

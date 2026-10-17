@@ -1,7 +1,11 @@
 ---
 title: s46 API
-description: "Production contract for s46 consumers: an org-scoped, invite-gated control plane plus a vendor-compatible model gateway."
+description: "Source API reference for the control plane and model gateway."
 ---
+
+## Release status
+
+These pages describe the **current source contract**, including pending runtime metadata, cloud protocol normalization, independent-policy gates, session-control removal, and operator-only worker provisioning. They do not establish deployed availability or a new stable CLI release. No production trust policy is supplied or provisioned by these changes. Production URLs below identify the service endpoints, not evidence that the pending behavior is live.
 
 ## Two base URLs
 
@@ -13,7 +17,7 @@ The control plane handles identity and configuration; the harness gateway handle
 </Cards>
 
 <Cards columns={3}>
-  <Card href="/docs/quickstart" title="Quickstart" description="From invite to your first model call in five minutes — CLI or raw HTTP." cta="Make your first call →" />
+  <Card href="/docs/quickstart" title="Quickstart" description="Authenticate, discover authorized models, and call the gateway." cta="Make your first call →" />
   <Card href="/docs/conventions" title="Conventions" description="Auth headers, rate limits, idempotency, pagination, versioning." cta="Read the rules →" />
   <Card href="/docs/errors" title="Errors" description="One envelope, one code catalog. Branch on status plus code." cta="See all codes →" />
 </Cards>
@@ -25,9 +29,9 @@ The control plane handles identity and configuration; the harness gateway handle
 | `1` | Check status endpoints and wire JSON error handling. | [Operations](/docs/operations) |
 | `2` | Implement auth; store device-bound access and refresh credentials. | [Auth](/docs/auth) |
 | `3` | Read the current account, then resolve the selected team's metadata. | [Account](/docs/account) · [Teams](/docs/teams-sessions) |
-| `4` | Use the team's `endpoint`, `defaultModel`, and `models` to call the gateway. | [Gateway](/docs/gateway) |
+| `4` | Use the team's `endpoint`, authorized `models`, and `modelMetadata`; check the configured default is allowed. | [Gateway](/docs/gateway) |
 | `5` | If the user is an org/team admin, expose admin and model-policy routes. | [Admin](/docs/admin) · [Models](/docs/models) |
-| `6` | If you are building infrastructure, implement the worker control protocol. | [Worker control](/docs/worker-control) |
+| `6` | Operators provision workers; returned worker credentials authorize lifecycle calls, not provisioning. | [Worker control](/docs/worker-control) |
 
 ## Core rules
 
@@ -73,7 +77,7 @@ Query parameters must be query-escaped, e.g. `?team=%40s46%2Fengineering`.
 
 ## Error envelope
 
-Every JSON failure uses the same shape. Branch on HTTP status plus `error.code`; never parse `message` for control flow.
+Branch on HTTP status plus `error.code`; never parse `message` for control flow. Readiness status bodies and in-stream errors have their own shapes — see [Errors](/docs/errors).
 
 ```json
 {
@@ -85,5 +89,3 @@ Every JSON failure uses the same shape. Branch on HTTP status plus `error.code`;
 ```
 
 [See the full status and code catalog →](/docs/errors)
-
-{/* OpenAPI route coverage: /healthz /readyz /debug/vars /assets/auth.css /session /session/ /device /v1/auth/device/start /v1/auth/login/start /v1/auth/device/poll /v1/auth/magic/consume /v1/auth/token/refresh /v1/auth/passkeys/register/start /v1/auth/passkeys/register/finish /v1/auth/passkeys/login/start /v1/auth/passkeys/login/finish /v1/auth/logout /v1/me /v1/devices /v1/devices/{deviceId} /v1/teams/{team} /v1/sessions /v1/sessions/{sessionId}/detach /v1/sessions/{sessionId}/resume /v1/sessions/{sessionId}/attach /v1/sessions/{sessionId}/stream /v1/sessions/{sessionId}/land /v1/admin/overview /v1/admin/organizations /v1/admin/organizations/{slug} /v1/admin/organization-members /v1/admin/organization-roles /v1/admin/people /v1/admin/invite /v1/admin/people/invite /v1/admin/invites /v1/admin/invite/revoke /v1/admin/people/{email} /v1/admin/people/{email}/teams /v1/admin/people/{email}/teams/{team} /v1/admin/people/{email}/devices/{deviceId}/revoke /v1/admin/people/{email}/invites/resend /v1/admin/people/{email}/audit /v1/admin/teams /v1/admin/teams/{team} /v1/admin/harness-policies /v1/admin/harness-policies/{team} /v1/admin/github/installations /v1/admin/repositories /v1/admin/models /v1/admin/model-policies /v1/admin/workers /v1/admin/workers/{id} /v1/admin/workers/{id}/logs /v1/admin/workers/{id}/drain /v1/admin/workers/{id}/revoke /v1/admin/jobs /v1/admin/jobs/{id}/logs /v1/admin/jobs/{id}/cancel /v1/admin/jobs/{id}/retry /v1/admin/schedules /v1/admin/usage /v1/admin/audit /v1/admin/leases/reconcile /v1/admin/seed /v1/worker/register /v1/worker/heartbeat /v1/worker/jobs/lease /v1/worker/jobs/complete /v1/internal/leases/ack /v1/workers /v1/workers/{id} /v1/models /v1/responses /v1/chat/completions /anthropic/v1/models /anthropic/v1/messages /codex/v1/models /codex/v1/responses */}

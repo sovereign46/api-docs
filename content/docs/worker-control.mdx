@@ -1,9 +1,11 @@
 ---
 title: Worker control
-description: Register workers, heartbeat, lease jobs, acknowledge leases, and report completion.
+description: Operator-only worker provisioning, then credentialed heartbeat and job leasing.
 ---
 
-The protocol infrastructure implements to run work: register a worker, heartbeat, lease jobs, acknowledge the lease, and report completion. For building clients you do not need this — it is for operators running the fleet. API-backed model certification uses the same worker lease path with `kind: "model"` jobs and capability gates (`model_certification`, `model_registry_publish`).
+Operators provision workers; workers use the returned credentials to heartbeat, lease jobs, acknowledge leases, and report completion. The API represents model certification/publication as `kind: "model"` jobs with capability checks (`model_certification`, `model_registry_publish`); provisioning does not implement or attest those workloads.
+
+The API checks worker credentials, lease eligibility/capacity, job compatibility, and assigned job/lease identifiers. Stored [harness policy](/docs/admin#harness-policies) is separate: these routes do not establish a signed per-job sandbox policy or CLI drift enforcement.
 
 <Note tag="Authoritative schema">
   This page describes the worker lifecycle and route groups. The exact lease/job payload schema is in `/openapi.json` — treat it as the source of truth for field names.
@@ -15,7 +17,7 @@ The protocol infrastructure implements to run work: register a worker, heartbeat
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `POST` | `/v1/worker/register` | Register a worker and its capabilities; receive a worker credential. |
+| `POST` | `/v1/worker/register` | Operator-only provisioning; returns a worker credential. |
 | `POST` | `/v1/worker/heartbeat` | Report liveness and current state. |
 | `POST` | `/v1/worker/jobs/lease` | Lease the next compatible job. |
 | `POST` | `/v1/internal/leases/ack` | Acknowledge a lease before starting work. |
@@ -26,7 +28,22 @@ The protocol infrastructure implements to run work: register a worker, heartbeat
 
 ### Register
 
-POST capabilities (models, kinds, region). The control plane returns a worker credential used on subsequent calls.
+<Method method="POST" path="/v1/worker/register" returns="201 / 403" />
+<EndpointMeta>Auth · **configured operator token**</EndpointMeta>
+
+Production requires the configured `S46_ADMIN_TOKEN`, sent as `Authorization: Bearer <operator-token>` or `X-S46-Admin-Token`. Use one transport; a supplied bearer credential takes precedence. Tenant owner/admin/team-admin/viewer tokens and worker credentials return `403 forbidden` for **every scope and worker ID**, including replacement of an existing ID. Do not expose the operator token in tenant clients.
+
+Non-production keeps bootstrap access only when no operator token is configured; otherwise the same operator check applies. This exception is not tenant provisioning authority.
+
+Send worker metadata (kind, region, capacity, capabilities, and models). `201` returns `{ worker, token }`; that token is for subsequent worker calls, not registration. Same-ID replacement rotates that worker's credential. Making provisioning operator-only does **not** retroactively revoke other issued credentials: operators must inventory and rotate/revoke them explicitly. Provisioning and reported capabilities are not VM isolation, loaded-model verification, or certification attestation.
+
+| Registration scope | Validation and leasing boundary |
+| --- | --- |
+| `team` supplied | Team must exist; its organization is derived. An explicit `organizationSlug` must match. Leasing stays within both organization and team. |
+| Only `organizationSlug` supplied | Organization must exist. Leasing stays within that organization. |
+| Both empty/omitted | Intentionally global, cross-organization operator pool; other job eligibility checks still apply. |
+
+Invalid or conflicting scope returns `400 invalid_request`; unknown teams/organizations return `404 not_found`. Scope is stored at provisioning, not selected by later lease requests. Worker details/logs/drain/revoke authorize against that stored team, else organization; global workers require operator credentials.
 
 ### Heartbeat
 
@@ -34,15 +51,17 @@ Periodically report liveness and state so the scheduler can route work and mark 
 
 ### Lease
 
-Ask for the next compatible job. When none is available — or the worker cannot lease yet — the API returns `428 authorization_pending`; retry on backoff.
+Ask for the next compatible job. Leasing uses current stored worker fields and rechecks the credential under the lease lock, so a previously authorized request cannot retain old scope/capabilities after rotation or revocation. When no eligible job is available, the API returns `428 authorization_pending`.
+
+Model lifecycle jobs require `model_certification` for `model.certify`, or `model_registry_publish` for `model.publish`/`model.yank`; advertising the model ID alone is insufficient. These are scheduling checks, not evidence of workload execution.
 
 ### Acknowledge
 
-Ack the lease to take ownership before starting. Unacknowledged leases expire and return to the queue.
+Acknowledge the assigned job and lease before starting. The API validates the worker credential and matching leased job/worker/lease IDs, then records the acknowledgement; it does not load or execute a stored harness policy.
 
 ### Complete
 
-Report success or failure. Failures may be retried by the scheduler depending on job policy. For `model.certify`, completion includes green evidence and threshold signatures; for `model.publish` it includes registry publication metadata; for `model.yank` it completes the signed yank log step.
+Report success or failure. Model lifecycle completion payloads carry certification evidence or publication/yank results for API validation; registration alone does not prove a worker performed those workloads.
 
 ## Lease a job
 
@@ -56,14 +75,14 @@ Returns a job to run, or `428 authorization_pending` when no compatible work is 
 curl -X POST https://api.s46.dev/v1/worker/jobs/lease \
   -H "Authorization: Bearer $S46_WORKER_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{ "workerId": "worker_01", "capabilities": ["chat", "code"] }'
+  -d '{ "workerId": "worker_01", "leaseSeconds": 60 }'
 ```
 
 ```ts
 const res = await fetch("https://api.s46.dev/v1/worker/jobs/lease", {
   method: "POST",
   headers: { Authorization: `Bearer ${workerToken}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ workerId: "worker_01", capabilities: ["chat", "code"] }),
+  body: JSON.stringify({ workerId: "worker_01", leaseSeconds: 60 }),
 });
 const job = res.status === 200 ? await res.json() : null; // 428 = no work
 ```
@@ -71,20 +90,11 @@ const job = res.status === 200 ? await res.json() : null; // 428 = no work
 ```py
 res = requests.post("https://api.s46.dev/v1/worker/jobs/lease",
                     headers={"Authorization": f"Bearer {worker_token}"},
-                    json={"workerId": "worker_01", "capabilities": ["chat", "code"]})
+                    json={"workerId": "worker_01", "leaseSeconds": 60})
 job = res.json() if res.status_code == 200 else None  # 428 = no work
 ```
 
-```json
-{
-  "jobId": "job_01J...",
-  "sessionId": "@dscape/auth-redirect-fix",
-  "team": "@s46/engineering",
-  "region": "EU-OPO",
-  "model": "s46/devstral-small-2-24b",
-  "leaseExpiresAt": "2030-01-01T12:05:00Z"
-}
-```
+`200` returns `{ job, lease }`. Use `job.id` and `lease.id` for acknowledgement and completion; scope and capabilities are not lease-request overrides.
 
 ```json
 { "error": { "code": "authorization_pending", "message": "no compatible work" } }

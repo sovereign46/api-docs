@@ -11,7 +11,7 @@ export function buildLlmsText() {
 
   return `# Sovereign46 API docs
 
-> Production contract for Sovereign46 API consumers, admin tooling, workers, and model gateway integrations.
+> Current source API reference. Check [release status](https://docs.s46.dev/docs#release-status) for pending behavior; these docs do not verify deployment.
 
 Canonical URLs:
 - Docs: ${SITE_URL}/docs
@@ -22,8 +22,10 @@ Canonical URLs:
 Contract constraints:
 - Use canonical \`@org/team\` team identifiers.
 - Use \`region\` terminology; legacy \`lane\` does not appear in new payloads.
-- Tenant wildcard hosts are not part of the production contract.
+- Tenant wildcard hosts are not part of the API contract.
 - User-facing clients use user-scoped bearer tokens from the invite-gated device flow.
+- Select models from authorized team metadata; a configured default may not be currently allowed.
+- Verification-enabled model serving requires independent current registry trust, including in development.
 
 ## Documentation pages
 

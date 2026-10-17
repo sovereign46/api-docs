@@ -1,159 +1,56 @@
 ---
 title: Harness gateway
-description: OpenAI, Anthropic, Codex, model discovery, streaming, and airplane-mode local workers.
+description: Model discovery, protocol support, output limits, and streaming.
 ---
 
-OpenAI-, Anthropic-, and Codex-compatible model calls, model discovery, streaming, and airplane-mode local workers. Use the `endpoint` returned by `GET /v1/teams/{team}` — production default `https://gateway.s46.dev`.
+Use the `endpoint`, `defaultModel`, and authorized `models` returned by [team resolution](/docs/teams-sessions). Cloud requests use public IDs such as `s46/deepseek-v4-flash-0731`; the gateway maps them to the verified backend alias (for example, `ds4-flash-0731`). Do not send backend aliases as public model IDs.
 
-<Note tag="Auth">
-  In production, model POST routes require a valid s46 bearer token. The gateway uses it to resolve the caller's team, choose the team default model when `model` is omitted, and enforce model policy. Dev / airplane-mode deployments may allow anonymous local responses — do not rely on that in production.
-</Note>
+Model POST routes require a bearer token in production **and whenever registry verification is enabled**, including development. The gateway enforces independent current registry verification and the caller's team policy. Explicitly sync-disabled development and default airplane mode retain local/mock behavior.
 
 <RouteIndex page="gateway" />
-
-## Route inventory
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/models` | OpenAI-style model list. |
-| `POST` | `/v1/responses` | OpenAI Responses-compatible request. |
-| `POST` | `/v1/chat/completions` | OpenAI Chat Completions-compatible request. |
-| `GET` | `/anthropic/v1/models` | Anthropic-style model list. |
-| `POST` | `/anthropic/v1/messages` | Anthropic Messages-compatible request. |
-| `GET` | `/codex/v1/models` | Codex/OpenAI-style model list. |
-| `POST` | `/codex/v1/responses` | Codex Responses-compatible request. |
-| `GET` | `/v1/workers` · `/v1/workers/{id}` | Airplane-mode local worker discovery. |
-
-The gateway also exposes `GET /healthz`, `GET /readyz`, and `GET /debug/vars` — see [Operations](/docs/operations).
 
 ## Chat completions
 
 <Method method="POST" path="/v1/chat/completions" returns="200 / SSE" />
 
-OpenAI Chat Completions-compatible. Omit `model` to use the team default. Set `"stream": true` for `text/event-stream` chunks that terminate with `[DONE]`.
-
-<EndpointMeta>Auth · **bearer (production)**</EndpointMeta>
-
-```bash
-curl -X POST https://gateway.s46.dev/v1/chat/completions \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "s46/devstral-small-2-24b",
-    "messages": [
-      { "role": "user", "content": "Write a short status update." }
-    ]
-  }'
-```
-
-```ts
-// Drop-in for the OpenAI SDK — swap the base URL.
-import OpenAI from "openai";
-
-const client = new OpenAI({
-  apiKey: accessToken,
-  baseURL: "https://gateway.s46.dev/v1",
-});
-
-const completion = await client.chat.completions.create({
-  model: "s46/devstral-small-2-24b",
-  messages: [{ role: "user", content: "Write a short status update." }],
-});
-```
-
-```py
-from openai import OpenAI
-
-client = OpenAI(api_key=access_token,
-                base_url="https://gateway.s46.dev/v1")
-
-completion = client.chat.completions.create(
-    model="s46/devstral-small-2-24b",
-    messages=[{"role": "user", "content": "Write a short status update."}],
-)
-```
+Omit `model` to use the team default. For a complete discovery-driven call, see the [quickstart](/docs/quickstart#call-the-gateway). OpenAI SDK clients can use the returned gateway endpoint plus `/v1` as their base URL and select an ID from the team's authorized list.
 
 ## Responses & Codex
 
-<Method method="POST" path="/v1/responses" />
-<Method method="POST" path="/codex/v1/responses" />
+<Method method="POST" path="/v1/responses" returns="200 / SSE" />
+<Method method="POST" path="/codex/v1/responses" returns="200 / SSE" />
 
-OpenAI Responses-compatible request/response shapes. Codex routes use the same shapes. Streaming requests set `"stream": true` and receive OpenAI Responses-style events.
-
-```bash
-curl -X POST https://gateway.s46.dev/v1/responses \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "s46/devstral-small-2-24b",
-    "input": "Write a short status update.",
-    "stream": false
-  }'
-```
-
-```ts
-const res = await fetch("https://gateway.s46.dev/v1/responses", {
-  method: "POST",
-  headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model: "s46/devstral-small-2-24b",
-    input: "Write a short status update.",
-    stream: false,
-  }),
-}).then((r) => r.json());
-```
-
-```py
-res = requests.post(
-    "https://gateway.s46.dev/v1/responses",
-    headers={"Authorization": f"Bearer {access_token}"},
-    json={"model": "s46/devstral-small-2-24b",
-          "input": "Write a short status update.", "stream": False},
-).json()
-```
+Both routes accept text input, message history, function calls/results, function tools, and text/JSON output formats. Send full history on each request: stored responses, nonempty `previous_response_id`, background execution, automatic truncation, and non-null `reasoning` are unsupported. Multimodal input and built-in/server tools are unsupported.
 
 ## Anthropic Messages
 
-<Method method="POST" path="/anthropic/v1/messages" />
+<Method method="POST" path="/anthropic/v1/messages" returns="200 / SSE" />
 
-Anthropic Messages-compatible. The local llama.cpp adapter supports Anthropic `tools`, `tool_choice`, `tool_use`, and `tool_result` by normalizing them through an internal OpenAI-compatible tool-call representation.
+Supports text, system prompts, function tools, `tool_choice`, `tool_use`, and text `tool_result` blocks. Images, documents, thinking blocks/signatures, server tools, and context-management features are unsupported.
 
-```bash
-curl -X POST https://gateway.s46.dev/anthropic/v1/messages \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "s46/devstral-small-2-24b",
-    "max_tokens": 512,
-    "messages": [
-      { "role": "user", "content": [ { "type": "text", "text": "Write a short status update." } ] }
-    ]
-  }'
-```
+These are compatibility subsets, not complete vendor APIs. Unsupported Responses or Anthropic features return `400 unsupported_feature`.
 
-```ts
-const msg = await fetch("https://gateway.s46.dev/anthropic/v1/messages", {
-  method: "POST",
-  headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model: "s46/devstral-small-2-24b",
-    max_tokens: 512,
-    messages: [{ role: "user", content: [{ type: "text", text: "Write a short status update." }] }],
-  }),
-}).then((r) => r.json());
-```
+## Output limits
 
-```py
-msg = requests.post(
-    "https://gateway.s46.dev/anthropic/v1/messages",
-    headers={"Authorization": f"Bearer {access_token}"},
-    json={
-        "model": "s46/devstral-small-2-24b",
-        "max_tokens": 512,
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "Write a short status update."}]}],
-    },
-).json()
-```
+The verified cloud cap is the smaller positive catalog value of `maxOutputTokens` and `contextWindow`, or the sole positive value. Omitted output limits default to that cap; excessive values are **rejected**, not clamped. Without either limit, the gateway supplies no catalog-derived default.
+
+| Protocol | Accepted output-limit fields |
+| --- | --- |
+| Chat Completions | `max_tokens`, `max_completion_tokens` |
+| Responses / Codex | `max_output_tokens`, `max_tokens`, `max_completion_tokens` |
+| Anthropic Messages | `max_tokens` |
+
+Limits must be positive integers no greater than 2,147,483,647 and the effective catalog limit. Multiple supplied limits must agree. Invalid, conflicting, protocol-inappropriate limits and cloud `n_predict` return `400 invalid_request`. Runtime `reasoning` metadata does not imply that the compatibility adapters accept reasoning controls.
+
+## Streaming
+
+Set `stream: true` for `text/event-stream`:
+
+- Chat emits completion chunks and `[DONE]` on success.
+- Responses/Codex emit Responses-style events, ending with `response.completed` or `response.incomplete` when output is limited.
+- Anthropic emits Messages-style events through `message_stop` on success.
+
+An upstream failure before streaming returns `502 upstream_error`. After headers are sent, inspect stream errors rather than HTTP status: chat emits an error object, Responses emits `response.failed`, and Anthropic emits an `error` event. Do not treat a truncated stream as successful completion.
 
 ## Model discovery
 
@@ -161,107 +58,30 @@ msg = requests.post(
 <Method method="GET" path="/anthropic/v1/models" />
 <Method method="GET" path="/codex/v1/models" />
 
-`GET /v1/models` and `/codex/v1/models` return an OpenAI-shaped list; `/anthropic/v1/models` returns the Anthropic shape.
+Discovery does not require authentication. When verification is enabled, lists contain independently verified servable catalog entries; they are **not** the caller's team allow-list. Use team resolution for authorized selection.
 
-```bash
-curl https://gateway.s46.dev/v1/models \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
-```
-
-```ts
-const { data } = await fetch("https://gateway.s46.dev/v1/models", {
-  headers: { Authorization: `Bearer ${accessToken}` },
-}).then((r) => r.json());
-```
-
-```py
-models = requests.get("https://gateway.s46.dev/v1/models",
-                      headers={"Authorization": f"Bearer {access_token}"}).json()
-```
-
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "s46/devstral-small-2-24b",
-      "object": "model",
-      "created": 1893456000,
-      "owned_by": "sovereign46",
-      "metadata": {
-        "displayName": "Devstral Small 2 24B",
-        "certified": true,
-        "published": true,
-        "verificationState": "trusted"
-      }
-    }
-  ]
-}
-```
-
-```json
-{
-  "data": [
-    { "id": "s46/devstral-small-2-24b", "type": "model", "display_name": "Devstral Small 2 24B" }
-  ],
-  "has_more": false
-}
-```
+OpenAI/Codex return `{ object: "list", data: [...] }`, with each entry's catalog details under `metadata`, including `format`, `runtime`, `contextWindow`, and `maxOutputTokens`. Anthropic returns `{ data: [{ id, type: "model", display_name }], has_more: false }` without runtime metadata. See [Models](/docs/models#certified-models) and the [OpenAPI schemas](/openapi.json).
 
 ## Policy & availability failures
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| `403` | `model_not_allowed` | Requested model is not certified/allowed for the caller's team. |
-| `429` | `rate_limited` | Per-IP stream/request rate limit exceeded. |
-| `503` | `model_unavailable` | Model is allowed but no upstream/local serving path is available. |
+| `403` | `model_not_allowed` | Model is not certified/allowed for this team. |
+| `503` | `model_registry_unavailable` | Independent registry verification is unavailable or no longer current. |
+| `503` | `model_unavailable` | No configured serving upstream is available. |
+| `502` | `upstream_error` | Upstream request or response failed. |
+
+See [Errors](/docs/errors) for authentication, validation, and rate-limit failures. `/healthz` and `/readyz` are described in [Operations](/docs/operations).
 
 ## Airplane-mode workers
 
-<Method method="GET" path="/v1/workers · /v1/workers/{id}" />
+<Method method="GET" path="/v1/workers" />
+<Method method="GET" path="/v1/workers/{id}" />
 
-Discover local workers. Current id: `local-llamacpp`. Worker states: `not_configured`, `unavailable`, `unhealthy`, `model_missing`, `ready`. When configured, requests using the s46 model id are rewritten to the backend alias and proxied to `llama-server`; max tokens are clamped to local config.
+Local worker discovery uses ID `local-llamacpp` and states `not_configured`, `unavailable`, `unhealthy`, `model_missing`, or `ready`. Local GGUF models such as `s46/devstral-small-2-24b` use llama.cpp; native safetensors cloud packages are a separate serving path. Local model IDs map to configured backend aliases, and local output limits are clamped to local configuration.
 
-```bash
-curl https://gateway.s46.dev/v1/workers \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
-```
+## Upstream behavior
 
-```ts
-const { workers } = await fetch("https://gateway.s46.dev/v1/workers", {
-  headers: { Authorization: `Bearer ${accessToken}` },
-}).then((r) => r.json());
-```
+Verified cloud Chat, Responses, Codex, and Anthropic calls normalize through one Chat Completions upstream. Dedicated Anthropic/Codex passthroughs and arbitrary-model proxy/mock behavior are only used when verification is disabled. Caller authorization headers and cookies are not forwarded upstream.
 
-```py
-workers = requests.get("https://gateway.s46.dev/v1/workers",
-                       headers={"Authorization": f"Bearer {access_token}"}).json()
-```
-
-```json
-{
-  "workers": [
-    {
-      "id": "local-llamacpp",
-      "mode": "airplane",
-      "kind": "local",
-      "protocol": "openai-compatible",
-      "state": "ready",
-      "models": [
-        { "id": "s46/devstral-small-2-24b", "backendModel": "devstral-small-2:24b-instruct-2512-q4_K_M", "state": "ready" }
-      ],
-      "capabilities": ["chat", "code", "streaming", "tools"]
-    }
-  ]
-}
-```
-
-## Upstream proxy behavior
-
-When upstream URLs are configured, the gateway proxies compatible requests *without* forwarding the caller's `Authorization` header or cookies. If `S46_UPSTREAM_BEARER_TOKEN` is set, that token is sent upstream.
-
-| Route group | Upstream setting | Prefix behavior |
-| --- | --- | --- |
-| `/v1/*` | `S46_OPENAI_UPSTREAM_URL` | Preserves `/v1/*`. |
-| `/anthropic/*` | `S46_ANTHROPIC_UPSTREAM_URL` | Strips `/anthropic`, after local-model handling. |
-| `/codex/*` | `S46_CODEX_UPSTREAM_URL` | Strips `/codex` before forwarding. |
+For upstream settings and policy setup, see the [environment reference](https://github.com/sovereign46/api/blob/main/docs/development.md#environment-reference) and [policy runbook](https://github.com/sovereign46/api/blob/main/docs/deployment-trust-policy.md).

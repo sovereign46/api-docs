@@ -18,6 +18,7 @@ Canonical URLs:
 - OpenAPI: ${SITE_URL}/openapi.json
 - API: https://api.s46.dev
 - Harness gateway: https://gateway.s46.dev
+- Model assurance status: ${SITE_URL}/docs/model-status
 
 Contract constraints:
 - Use canonical \`@org/team\` team identifiers.
@@ -25,6 +26,7 @@ Contract constraints:
 - Tenant wildcard hosts are not part of the API contract.
 - User-facing clients use user-scoped bearer tokens from the invite-gated device flow.
 - Select models from authorized team metadata; a configured default may not be currently allowed.
+- Keep artifact identity, runtime certification, release approval, publication, activation, and live inference separate.
 - Verification-enabled model serving requires independent current registry trust, including in development.
 
 ## Documentation pages

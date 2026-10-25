@@ -33,7 +33,7 @@ Grouped by status class. Every `code` below is stable and safe to switch on.
 | `401` | `unauthorized` | Missing, expired, revoked, or invalid bearer / cookie / worker credential. |
 | `403` | `not_invited` | Email is not currently invited, or the invitation was revoked. |
 | `403` | `forbidden` | Authenticated user lacks the owner/admin role, or the action is disallowed. |
-| `403` | `model_not_allowed` | Requested model is not certified/allowed for the caller's team. |
+| `403` | `model_not_allowed` | Requested model is not currently authorized and available for the caller's team. |
 | `404` | `not_found` | Target does not exist or is not visible to the credential. |
 | `405` | `method_not_allowed` | Route exists but the HTTP method is unsupported. |
 | `409` | `conflict` | Resource conflict or duplicate state. |

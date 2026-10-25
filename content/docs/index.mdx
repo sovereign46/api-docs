@@ -5,7 +5,7 @@ description: "Source API reference for the control plane and model gateway."
 
 ## Release status
 
-These pages describe the **current source contract**, including pending runtime metadata, cloud protocol normalization, independent-policy gates, session-control removal, and operator-only worker provisioning. They do not establish deployed availability or a new stable CLI release. No production trust policy is supplied or provisioned by these changes. Production URLs below identify the service endpoints, not evidence that the pending behavior is live.
+These pages describe the **current source contract**, including runtime metadata, cloud protocol normalization, independent-policy gates, session-control removal, and operator-only worker provisioning. They do not establish deployed availability or a new stable CLI release. No production trust policy is supplied or provisioned by these changes. Production URLs below identify service endpoints, not evidence that a model is live. The dated [model assurance status](/docs/model-status) records the current Devstral and DeepSeek evidence without collapsing identity, certification, publication, activation, and inference.
 
 ## Two base URLs
 
@@ -16,8 +16,9 @@ The control plane handles identity and configuration; the harness gateway handle
   <Card url="https://gateway.s46.dev" description="OpenAI-, and Anthropic-compatible model calls." />
 </Cards>
 
-<Cards columns={3}>
+<Cards columns={2}>
   <Card href="/docs/quickstart" title="Quickstart" description="Authenticate, discover authorized models, and call the gateway." cta="Make your first call →" />
+  <Card href="/docs/model-status" title="Model assurance" description="See artifact, runtime, release, publication, activation, and inference status separately." cta="Check current status →" />
   <Card href="/docs/conventions" title="Conventions" description="Auth headers, rate limits, idempotency, pagination, versioning." cta="Read the rules →" />
   <Card href="/docs/errors" title="Errors" description="One envelope, one code catalog. Branch on status plus code." cta="See all codes →" />
 </Cards>
@@ -71,7 +72,8 @@ Query parameters must be query-escaped, e.g. `?team=%40s46%2Fengineering`.
 | Account | `/v1/me` · `/v1/devices` | User and devices |
 | Teams / sessions | `/v1/teams` · `/v1/sessions` | Team config and sessions |
 | Admin | `/v1/admin` | Orgs, people, workers, jobs |
-| Models | `/v1/admin/models` · `/v1/admin/model-policies` | Certified models and policy |
+| Models | `/v1/admin/models` · `/v1/admin/model-policies` | Release catalog and team policy |
+| Model assurance | signed registry · readiness · serving | Separate evidence and availability states |
 | Worker control | `/v1/worker` · `/v1/internal` | Register and lease jobs |
 | Harness gateway | `gateway.s46.dev` | Model APIs |
 

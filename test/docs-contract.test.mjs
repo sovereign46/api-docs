@@ -258,6 +258,29 @@ test('model discovery is public; verified model POST contracts include auth, SSE
   }
 });
 
+test('model assurance docs keep identity, release, activation, and inference separate', () => {
+  const status = docs['model-status.mdx'];
+  for (const phrase of [
+    'Artifact identity',
+    'Runtime certification',
+    'Release approval',
+    'Registry publication',
+    'Authorized activation',
+    'Production inference',
+    'Not runtime certified',
+    'Unavailable and unauthorized',
+    'TinyStories documents lack previous-policy proofs',
+    'synchronous gateway usage accounting',
+    'backend alias differs',
+  ]) assert.ok(status.includes(phrase), phrase);
+  for (const examplePage of ['gateway.mdx', 'teams-sessions.mdx']) {
+    assert.ok(!/deepseek-v4-flash-0731/i.test(docs[examplePage]), `${examplePage}: candidate used as a serving example`);
+  }
+  assert.match(schemas.ModelCatalogEntry.properties.certified.description, /not an attestation of currently loaded runtime bytes/);
+  assert.match(schemas.ModelCatalogEntry.properties.published.description, /does not imply activation or serving availability/);
+  assert.match(schemas.ModelCatalogEntry.properties.sigsumStatus.description, /not a permanent live-health or activation badge/);
+});
+
 test('cloud request schemas describe supported limits and reject stateful/unsupported features', () => {
   assert.equal(schemas.OutputTokenLimit.minimum, 1);
   assert.equal(schemas.OutputTokenLimit.maximum, 2147483647);

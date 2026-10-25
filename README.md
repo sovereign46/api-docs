@@ -12,7 +12,7 @@ npm run build
 
 Open `http://localhost:3000/docs`. The OpenAPI document is served at `http://localhost:3000/openapi.json`.
 
-The docs track the current source contract in `s46-api`, not proof of deployment. See [release status](content/docs/index.mdx) before treating pending behavior as available in production or a stable CLI release. Team IDs use canonical `@org/team` identifiers; gateway examples discover authorized models and runtime limits.
+The docs track the current source contract in `s46-api`, not proof of deployment. See [release status](content/docs/index.mdx) and [model assurance status](content/docs/model-status.mdx) before treating source behavior, evidence, or a published release as live inference. Team IDs use canonical `@org/team` identifiers; gateway examples discover authorized models and runtime limits.
 
 ## Contract checks
 

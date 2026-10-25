@@ -3,7 +3,7 @@ title: Harness gateway
 description: Model discovery, protocol support, output limits, and streaming.
 ---
 
-Use the `endpoint`, `defaultModel`, and authorized `models` returned by [team resolution](/docs/teams-sessions). Cloud requests use public IDs such as `s46/deepseek-v4-flash-0731`; the gateway maps them to the verified backend alias (for example, `ds4-flash-0731`). Do not send backend aliases as public model IDs.
+Use the `endpoint`, `defaultModel`, and authorized `models` returned by [team resolution](/docs/teams-sessions). Cloud requests use a public ID returned there, such as the fictional `s46/example-published-model`; the gateway maps it to the signed backend alias. Do not send backend aliases as public model IDs or hard-code an identity-only candidate. See [model assurance status](/docs/model-status) for the current Devstral and DeepSeek state.
 
 Model POST routes require a bearer token in production **and whenever registry verification is enabled**, including development. The gateway enforces independent current registry verification and the caller's team policy. Explicitly sync-disabled development and default airplane mode retain local/mock behavior.
 
@@ -66,7 +66,7 @@ OpenAI/Codex return `{ object: "list", data: [...] }`, with each entry's catalog
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| `403` | `model_not_allowed` | Model is not certified/allowed for this team. |
+| `403` | `model_not_allowed` | Model is not currently authorized and available for this team. |
 | `503` | `model_registry_unavailable` | Independent registry verification is unavailable or no longer current. |
 | `503` | `model_unavailable` | No configured serving upstream is available. |
 | `502` | `upstream_error` | Upstream request or response failed. |

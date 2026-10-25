@@ -20,7 +20,9 @@ Admin model routes require an **owner or admin** role. The [OpenAPI document](/o
 | Publish | `POST /v1/admin/model-releases/{releaseId}/publish` | `202`: registry publication queued. |
 | Yank | `POST /v1/admin/model-releases/{releaseId}/yank` | `202`: serving blocked immediately; signed yank publication queued. |
 
-An upload is not certification, and a queued publication is not serving availability. Mutating release actions after create require `If-Match`; finalize, validate, publish, and yank also require `Idempotency-Key`. Read the returned release `etag` before the next mutation.
+An upload is not certification, and a queued publication is not serving availability. Identity review, runtime certification, release approval, publication, current transparency verification, activation, team authorization, and live inference are separate claims. Mutating release actions after create require `If-Match`; finalize, validate, publish, and yank also require `Idempotency-Key`. Read the returned release `etag` before the next mutation.
+
+The current model-by-model evidence is listed on [Model assurance status](/docs/model-status). DeepSeek identity signatures do not create an API model row or authorize serving.
 
 For worker integration and policy provisioning, see the [worker protocol](https://github.com/sovereign46/api/blob/main/docs/worker-protocol.md) and [policy runbook](https://github.com/sovereign46/api/blob/main/docs/deployment-trust-policy.md).
 
@@ -36,6 +38,9 @@ Returns catalog `models`, plus `modelPolicies` when the `team` query parameter i
 | `format` | `safetensors` for a native package, `gguf` for a GGUF artifact; older manifests may omit it. |
 | `runtime` | Signed engine/version, profile digest, context/output limits, reasoning capability, and memory hints. |
 | `contextWindow` / `maxOutputTokens` | Catalog limits derived from runtime metadata. |
+| `certified` | The signed release/audit gate passed for the represented release evidence. It does not attest a currently loaded runtime. |
+| `published` | The release is represented in the verified registry. It does not imply activation or availability. |
+| `sigsumStatus` | Transparency state recorded for the release verification result, not a permanent live-health badge. |
 
 Native safetensors use a `package.json` inventory, not a single GGUF file. Metadata verification is not evidence that checkpoint bytes are loaded or verified on a serving host. For authorized client selection and an example runtime response, see [Teams](/docs/teams-sessions).
 

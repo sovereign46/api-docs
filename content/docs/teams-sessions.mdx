@@ -28,19 +28,19 @@ Illustrative cloud response (limits come from the verified registry, not client 
   "region": "EU-OPO",
   "mode": "cloud",
   "workerHosts": [],
-  "defaultModel": "s46/deepseek-v4-flash-0731",
-  "models": ["s46/deepseek-v4-flash-0731"],
+  "defaultModel": "s46/example-published-model",
+  "models": ["s46/example-published-model"],
   "modelMetadata": {
-    "s46/deepseek-v4-flash-0731": {
-      "contextWindow": 262144,
-      "maxTokens": 32768,
-      "reasoning": true
+    "s46/example-published-model": {
+      "contextWindow": 32768,
+      "maxTokens": 4096,
+      "reasoning": false
     }
   }
 }
 ```
 
-On this public cloud resolution route, `models` contains only servable, team-allowed IDs; `modelMetadata` maps those same IDs to signed runtime metadata. [Admin team settings](/docs/admin#team-settings) are configured values, not this authorized discovery view. Runtime fields include engine/version, profile digest, context/output limits, reasoning capability, and memory hints; optional fields may be absent. This authenticates metadata, not loaded checkpoint bytes. Airplane teams use local settings and may return `modelMetadata: null`.
+The response above is fictional contract data, not a claim that any named model is live. On this public cloud resolution route, `models` contains only servable, team-allowed IDs; `modelMetadata` maps those same IDs to signed runtime metadata. [Admin team settings](/docs/admin#team-settings) are configured values, not this authorized discovery view. Runtime fields include engine/version, profile digest, context/output limits, reasoning capability, and memory hints; optional fields may be absent. This authenticates metadata, not loaded checkpoint bytes. Airplane teams use local settings and may return `modelMetadata: null`.
 
 When independent verification is required but unavailable, cloud resolution returns `503 model_registry_unavailable`. An empty authorized list is not permission to use an arbitrary model. Optional development overrides are `endpoint`, `region`, `mode`, and `defaultModel`.
 

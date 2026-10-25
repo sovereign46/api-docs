@@ -1,0 +1,64 @@
+---
+title: Model assurance status
+description: Current public evidence and serving status for Devstral and DeepSeek.
+---
+
+This page keeps artifact identity, runtime certification, release approval, registry publication, transparency, activation, and inference separate. Passing one stage does not imply any later stage.
+
+> **Observed 2026-10-24T23:18:52Z.** This is a dated status report, not signing or activation authority. Use [`/readyz`](/docs/operations#readiness), team resolution, and signed [models.s46.dev](https://models.s46.dev) metadata for live decisions.
+
+## Status matrix
+
+| Claim | Devstral Small 2 24B | DeepSeek V4 Flash-0731 |
+| --- | --- | --- |
+| Artifact identity | Bound to the exact historical GGUF release: SHA-256 `d14ba9edee1bb4c4996a726deb81e49ae81800a3216f0774634238c380aee496`, 14,334,446,752 bytes. | Fred and Gonçalo's signatures verify for identity packet `deepseek-v4-flash-0731-identity-20261019`, SHA-256 `2d0874f1af9e605e464ad04c35b9cc09a69239c34df08194c8f1bb22b129b710`. Coordinator finalization remains pending, so the retained official status is not yet `identity-approved`. |
+| Runtime certification | Historical release evidence covers the declared GGUF smoke/compatibility run. It does not attest the bytes currently loaded by a cloud server. | **Not runtime certified.** No approved protected runtime closure, atomic launcher, or independent campaign exists. |
+| Release approval | Historical full-independent approvals exist for the exact historical release evidence. | None. Identity-only signatures are not release approvals. |
+| Registry publication | Historical release is listed in the signed static registry. | Not published. DeepSeek is intentionally absent from the release index and audit index. |
+| Current transparency authorization | Not operational for activation. The historical proof cohort requires approved migration and the advisory index requires its missing signature. | None; there is no release proof cohort. |
+| Authorized activation | Not established. | Not established. |
+| Production inference | Unavailable while the registry gate is closed. | Unavailable and unauthorized. |
+
+The DeepSeek approval files have SHA-256 values:
+
+- Fred: `d88ecb72e9297aefb62d37fa07ba4fb3ee37bb7a6bc6a069c9fbdc2db6edb9c4`
+- Gonçalo: `d75d59c9b7fe99ba45ef9d713d4741bafea68eee4cb11c926c00cb6bf6fae256`
+
+Their signed scope is **artifact identity only**. It makes no quality, capability, safety, alignment, runtime, deployment, or serving claim.
+
+## Production observation
+
+At the observation time:
+
+- API and gateway readiness returned HTTP `503`;
+- gateway discovery returned `model_registry_unavailable`;
+- the public release registry listed Devstral and TinyStories, not DeepSeek;
+- the required signature for `advisories/v1/index.json` was absent; and
+- no authorized production hello-world request could pass the independent registry gate.
+
+A response from a legacy or directly addressed backend would be an operational observation only. It would not establish a signed release, approved activation, current transparency, team authorization, or loaded-byte identity.
+
+## Known path blockers
+
+- **Catalog migration:** four retained/current TinyStories documents lack previous-policy proofs. The complete catalog cannot use the reviewed migration until an explicit scope, recertification, or migration-policy decision is approved.
+- **Devstral cloud serving:** no identity-bound Devstral upstream is configured, and synchronous gateway usage accounting/monthly-cap enforcement is not established. Registry restoration alone cannot make it live.
+- **DeepSeek serving contract:** the proposed backend alias differs from the currently observed router contract. That identifier must be resolved across release, API, router, launcher, and activation evidence; identity-only signatures do not decide it.
+
+## What clients should do
+
+1. Require API and gateway readiness to be `200`.
+2. Resolve the team and choose only an ID present in its `models` list.
+3. Treat `defaultModel` as a preference, not proof of availability.
+4. Do not hard-code DeepSeek or infer availability from this page.
+5. Handle `model_registry_unavailable`, `model_not_allowed`, and `model_unavailable` as distinct failures.
+
+## Terminology
+
+- **Artifact identity:** reviewers signed a digest-bound description of exact artifact bytes.
+- **Runtime certification:** approved evidence binds an exact runtime/material closure and execution profile.
+- **Release approval:** the release gate accepted exact evidence and subject bytes.
+- **Published:** a signed release is present in the registry; this does not prove it is loaded.
+- **Activated:** an approved deployment selected exact release/runtime identity.
+- **Available:** current registry verification, team authorization, and an identity-bound serving upstream all pass.
+
+Never collapse these into an unqualified “approved”, “verified”, “green”, or “active” badge.

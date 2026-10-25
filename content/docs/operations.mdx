@@ -1,36 +1,17 @@
 ---
 title: Operations
-description: Health, readiness, diagnostics, and API-served support pages.
+description: Liveness, readiness, and support routes.
 ---
 
-These routes are exposed by the control plane — the gateway also exposes the status routes.
+The control plane and gateway expose the same status checks. Neither requires authentication.
 
 <RouteIndex page="operations" />
-
-## Status checks
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/healthz` | Process liveness. |
-| `GET` | `/readyz` | Readiness. Reports database state when configured. |
 
 ## Liveness
 
 <Method method="GET" path="/healthz" returns="200" />
 
-Process liveness. No authentication.
-
-```bash
-curl https://api.s46.dev/healthz
-```
-
-```ts
-const health = await fetch("https://api.s46.dev/healthz").then((r) => r.json());
-```
-
-```py
-health = requests.get("https://api.s46.dev/healthz").json()
-```
+Reports process liveness, not model availability:
 
 ```json
 { "status": "ok" }
@@ -40,41 +21,26 @@ health = requests.get("https://api.s46.dev/healthz").json()
 
 <Method method="GET" path="/readyz" returns="200 / 503" />
 
-Readiness, with database state when a database is configured. Returns `503` if the configured database cannot be reached.
-
 ```bash
-curl https://api.s46.dev/readyz
+curl -i https://api.s46.dev/readyz
 ```
 
-```ts
-const ready = await fetch("https://api.s46.dev/readyz").then((r) => r.json());
-```
+Readiness requires a reachable database when configured and current independent registry verification when enabled. A healthy database or persisted catalog alone does not establish model readiness.
 
-```py
-ready = requests.get("https://api.s46.dev/readyz").json()
-```
+| HTTP | Body | Meaning |
+| --- | --- | --- |
+| `200` | `{ "status": "ok", "database": "ok" }` | Configured checks passed. |
+| `200` | `{ "status": "ok", "database": "disabled" }` | No database configured; any enabled registry check passed. |
+| `503` | `{ "status": "unavailable", "database": "unavailable" }` | Database check failed; registry check was not reached. |
+| `503` | `{ "status": "unavailable", "database": "ok", "modelRegistry": "unavailable" }` | Registry verification has not succeeded or is no longer current. `database` can also be `disabled`. |
 
-```json
-{ "status": "ok", "database": "ok" }
-```
+Readiness failures use this status body, **not** the JSON error envelope. `modelRegistry` is present only for a registry failure. Missing or unsafe independent policy prevents startup; an unavailable registry after startup fails readiness and model serving without making liveness or authentication dependent on model availability.
 
-```json
-{ "status": "ok", "database": "disabled" }
-```
+Policy provisioning belongs in the [operator runbook](https://github.com/sovereign46/api/blob/main/docs/deployment-trust-policy.md).
 
-```json
-{ "status": "unavailable", "database": "unavailable" }
-```
-
-## Browser support routes
-
-Consumers normally do not need these — they back the API-rendered auth pages.
+## Diagnostics & support
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/assets/auth.css` | Stylesheet used by the API-rendered auth pages. |
-| `GET` | `/session` · `/session/` | Session handoff shell. Does not expose a share payload. |
-
-The JSON session stream used by clients is `GET /v1/sessions/{sessionId}/stream?team={team}` — see [Teams & sessions](/docs/teams-sessions#attach--stream).
-
-{/* OpenAPI coverage: /debug/vars */}
+| `GET` | `/debug/vars` | Operator-authorized diagnostics; not an anonymous health check. |
+| `GET` | `/assets/auth.css` | Stylesheet for API-rendered auth pages. |

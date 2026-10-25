@@ -3,14 +3,14 @@ title: Admin
 description: Organization, people, team, runtime, usage, and audit routes.
 ---
 
-Manage organizations, people, teams, workers, jobs, schedules, usage, and audit. Everything under `/v1/admin` requires an **owner** or **admin** role for the target org/team.
+Manage organizations, people, teams, workers, jobs, schedules, usage, and audit. Tenant administration requires an **owner** or **admin** role for the target org/team; global worker operations require operator credentials.
 
 <Note tag="Authoritative schema">
   This page maps the admin capability groups and their conventions. For the exhaustive, field-level request/response schema of every admin route, generate from `/openapi.json` — it is the source of truth.
 </Note>
 
 <Note tag="Authorization" tone="warn">
-  Admin authorization accepts only `owner` and `admin`. `member` and `viewer` calls return `403 forbidden`. Check `GET /v1/me` before exposing admin surfaces in a client.
+  Tenant admin authorization accepts `owner` and `admin`, not `member` or `viewer`. Check `GET /v1/me` before exposing admin surfaces. Tenant roles do not grant operator-only provisioning or global worker access.
 </Note>
 
 <RouteIndex page="admin" />
@@ -19,9 +19,10 @@ Manage organizations, people, teams, workers, jobs, schedules, usage, and audit.
 
 | Group | Prefix | Manages |
 | --- | --- | --- |
-| Organizations | `/v1/admin/orgs` | Org settings, slugs, and region/residency defaults. |
+| Organizations | `/v1/admin/organizations` | Org settings, slugs, and region/residency defaults. |
 | People | `/v1/admin/people` | Directory, invitations, role assignment, and removal. |
 | Teams | `/v1/admin/teams` | Team CRUD, membership, default model, and mode. |
+| Harness policies | `/v1/admin/harness-policies` | Stored team harness configuration, not an enforcement engine. |
 | Workers | `/v1/admin/workers` | Registered worker fleet and host visibility. |
 | Jobs | `/v1/admin/jobs` | Control-plane job queue: inspect, retry, cancel. |
 | Schedules | `/v1/admin/schedules` | Region scheduling policy (the field is `region`, never `lane`). |
@@ -34,6 +35,26 @@ Manage organizations, people, teams, workers, jobs, schedules, usage, and audit.
 - Mutations accept an [`Idempotency-Key`](/docs/conventions#idempotency); reusing it with different parameters returns `409 idempotency_conflict`.
 - Updates to mutable resources use [`If-Match`](/docs/conventions#concurrency--etags); a stale revision returns `412 precondition_failed`.
 - All path identifiers (team, email, ids) must be URL path-escaped.
+
+## Team settings
+
+`GET /v1/admin/teams/{team}` returns configured settings and model IDs, **not** the servable, authorized model list. Use public `GET /v1/teams/{team}` for gated cloud discovery and authoritative `modelMetadata`.
+
+On a running service, registry-verification outages do not block admin settings reads or [model grant edits](/docs/models#team-model-policy). Authentication, scope, ETag, and idempotency rules still apply. Saving settings or enabling a grant does not reopen model serving without independent verification.
+
+## Harness policies
+
+`GET /v1/admin/harness-policies?team={team}` reads stored configuration; `POST` or `PUT` saves it. `/v1/admin/harness-policies/{team}` supports the same methods.
+
+When no policy is stored, defaults are `allowedFunctions: ["read", "bash", "edit", "write"]`, `mandatoryFunctions: []`, `sandboxProfiles: ["vm-default"]`, `loopEnabled: false`, and `exceptionLogging: true`. Saving fills an empty sandbox-profile list with `vm-default` and forces `exceptionLogging` to true; it does not otherwise merge missing fields with those read defaults.
+
+These fields do **not** establish CLI connect/status drift enforcement or a signed sandbox policy executed by each worker. [Gateway model authorization](/docs/gateway) and [worker credential/lease checks](/docs/worker-control) are separate implemented controls. See the [storage contract](https://github.com/sovereign46/api/blob/main/docs/harness-policy.md).
+
+## Worker administration
+
+`GET /v1/admin/workers/{id}` and `/logs`, plus `POST /drain` and `/revoke`, authorize against the worker's **stored** team, else organization. A worker with both scopes empty is an intentional cross-organization operator pool: its details, logs, drain, and revoke operations require operator credentials. Request scope hints do not override the stored resource scope.
+
+[Registration](/docs/worker-control#register) is operator-only for every scope. The new boundary does not retroactively revoke issued credentials; operators must inventory and rotate/revoke them explicitly.
 
 ## People & invitations
 

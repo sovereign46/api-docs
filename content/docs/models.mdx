@@ -1,132 +1,66 @@
 ---
 title: Models
-description: Certify S46 models, publish registry releases, and manage each team's allow-list.
+description: Model release lifecycle, catalog metadata, and team allow-lists.
 ---
 
-Certify S46 models, publish registry releases, and manage each team's allow-list. Policy set here is what the [harness gateway](/docs/gateway) enforces at call time.
-
-<Note tag="Authoritative schema">
-  Field shapes below mirror `/openapi.json`. Admin model routes require an owner or admin role. API-backed certification is the release control plane; gateway serving still fails closed against the verified `models.s46.dev` registry mirror plus `team_model_policies`.
-</Note>
+Admin model routes require an **owner or admin** role. The [OpenAPI document](/openapi.json) defines their schemas.
 
 <RouteIndex page="models" />
 
-## Route inventory
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/admin/model-releases` | List API-backed model releases. |
-| `POST` | `/v1/admin/model-releases` | Create a model release. |
-| `GET` | `/v1/admin/model-releases/{releaseId}` | Read release state and evidence. |
-| `POST` | `/v1/admin/model-releases/{releaseId}/upload-session` | Open a quarantine upload session. |
-| `POST` | `/v1/admin/model-releases/{releaseId}/finalize-upload` | Finalize artifact metadata into quarantine CAS. |
-| `POST` | `/v1/admin/model-releases/{releaseId}/validate` | Queue S46 certification worker validation. |
-| `POST` | `/v1/admin/model-releases/{releaseId}/publish` | Queue the registry publisher. |
-| `POST` | `/v1/admin/model-releases/{releaseId}/yank` | Block serving and queue a signed yank. |
-| `GET` | `/v1/admin/models` | List certified models the org may allow. |
-| `GET` | `/v1/admin/model-policies?team={team}` | Read a team's allow-list and default model. |
-| `PUT` | `/v1/admin/model-policies?team={team}` | Set a team's allow-list and default model. |
-
 ## Model release lifecycle
 
-<Method method="POST" path="/v1/admin/model-releases" returns="201" />
-<Method method="POST" path="/v1/admin/model-releases/{releaseId}/upload-session" returns="201" />
-<Method method="POST" path="/v1/admin/model-releases/{releaseId}/finalize-upload" returns="200" />
-<Method method="POST" path="/v1/admin/model-releases/{releaseId}/validate" returns="202" />
-<Method method="POST" path="/v1/admin/model-releases/{releaseId}/publish" returns="202" />
-<Method method="POST" path="/v1/admin/model-releases/{releaseId}/yank" returns="202" />
+`GET /v1/admin/model-releases` lists releases; `GET /v1/admin/model-releases/{releaseId}` returns state and evidence.
 
-The API creates release records and queues model-worker jobs; it does not treat an uploaded artifact as certified until a certification worker reports green evidence with threshold signatures.
+| Action | Route | Result |
+| --- | --- | --- |
+| Create | `POST /v1/admin/model-releases` | `201`: staged release for `{ namespace, team, modelSlug }`. |
+| Upload | `POST /v1/admin/model-releases/{releaseId}/upload-session` | `201`: upload URL for the declared SHA-256 and size. |
+| Finalize | `POST /v1/admin/model-releases/{releaseId}/finalize-upload` | `200`: quarantined artifact metadata. |
+| Validate | `POST /v1/admin/model-releases/{releaseId}/validate` | `202`: certification job queued. |
+| Publish | `POST /v1/admin/model-releases/{releaseId}/publish` | `202`: registry publication queued. |
+| Yank | `POST /v1/admin/model-releases/{releaseId}/yank` | `202`: serving blocked immediately; signed yank publication queued. |
 
-1. `POST /v1/admin/model-releases` creates `staged` state for `{ namespace, team, modelSlug }`.
-2. `POST /v1/admin/model-releases/{releaseId}/upload-session` returns a `PUT` upload URL for the expected SHA-256 and size.
-3. `POST /v1/admin/model-releases/{releaseId}/finalize-upload` records quarantine CAS metadata under `S46_MODEL_QUARANTINE_URI`.
-4. `POST /v1/admin/model-releases/{releaseId}/validate` queues a `model.certify` job for workers with `model_certification`.
-5. Worker completion stores green verification evidence, private-holdout suite metadata, threshold-signing records, and Sigsum status.
-6. `POST /v1/admin/model-releases/{releaseId}/publish` queues `model.publish` for workers with `model_registry_publish`; the publisher writes content-addressed artifacts and flips the signed registry index.
-7. `POST /v1/admin/model-releases/{releaseId}/yank` sets `servingBlocked=true` immediately, updates the local catalog mirror to fail closed, and queues `model.yank` for signed advisory/yank publication.
+An upload is not certification, and a queued publication is not serving availability. Identity review, runtime certification, release approval, publication, current transparency verification, activation, team authorization, and live inference are separate claims. Mutating release actions after create require `If-Match`; finalize, validate, publish, and yank also require `Idempotency-Key`. Read the returned release `etag` before the next mutation.
 
-All mutating release actions after create require `If-Match`; retryable actions also require `Idempotency-Key`.
+The current model-by-model evidence is listed on [Model assurance status](/docs/model-status). DeepSeek identity signatures do not create an API model row or authorize serving.
 
-```bash
-curl -X POST https://api.s46.dev/v1/admin/model-releases \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"namespace":"s46","team":"@s46/engineering","modelSlug":"devstral-small-2-24b"}'
-```
-
-```json
-{
-  "id": "rel_...",
-  "namespace": "s46",
-  "teamSlug": "@s46/engineering",
-  "modelId": "s46/devstral-small-2-24b",
-  "version": "r000001",
-  "state": "staged",
-  "revision": 1,
-  "etag": "\"1\""
-}
-```
+For worker integration and policy provisioning, see the [worker protocol](https://github.com/sovereign46/api/blob/main/docs/worker-protocol.md) and [policy runbook](https://github.com/sovereign46/api/blob/main/docs/deployment-trust-policy.md).
 
 ## Certified models
 
 <Method method="GET" path="/v1/admin/models" returns="200" />
 
-The certified catalog is still the serving gate. Each model must be certified, published, trusted, and not globally blocked by advisory/yank state before the gateway can serve it.
+Returns catalog `models`, plus `modelPolicies` when the `team` query parameter is supplied. Rows can include unservable entries and expose certification/publication/advisory state, artifact details, and runtime metadata. Serving additionally requires **independent current registry verification**, team authorization, and an unblocked model; persisted flags alone cannot establish trust.
 
-<EndpointMeta>Auth · **owner / admin**</EndpointMeta>
+| Field | Meaning |
+| --- | --- |
+| `id` / `backendModel` | Public model ID / verified serving alias. Clients send the public ID. |
+| `format` | `safetensors` for a native package, `gguf` for a GGUF artifact; older manifests may omit it. |
+| `runtime` | Signed engine/version, profile digest, context/output limits, reasoning capability, and memory hints. |
+| `contextWindow` / `maxOutputTokens` | Catalog limits derived from runtime metadata. |
+| `certified` | The signed release/audit gate passed for the represented release evidence. It does not attest a currently loaded runtime. |
+| `published` | The release is represented in the verified registry. It does not imply activation or availability. |
+| `sigsumStatus` | Transparency state recorded for the release verification result, not a permanent live-health badge. |
 
-```bash
-curl https://api.s46.dev/v1/admin/models \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
-```
-
-```json
-{
-  "models": [
-    {
-      "id": "s46/devstral-small-2-24b",
-      "displayName": "s46/devstral-small-2-24b",
-      "provider": "s46",
-      "certified": true,
-      "published": true,
-      "verificationState": "trusted",
-      "sigsumStatus": "verified"
-    }
-  ]
-}
-```
+Native safetensors use a `package.json` inventory, not a single GGUF file. Metadata verification is not evidence that checkpoint bytes are loaded or verified on a serving host. For authorized client selection and an example runtime response, see [Teams](/docs/teams-sessions).
 
 ## Team model policy
 
 <Method method="GET" path="/v1/admin/model-policies?team={team}" returns="200" />
-<Method method="PUT" path="/v1/admin/model-policies?team={team}" returns="200" />
+<Method method="PUT" path="/v1/admin/model-policies" returns="200" />
 
-A team's policy determines which certified models the gateway will serve for that team. A request for a model outside the allow-list fails at the gateway with `403 model_not_allowed`.
-
-<EndpointMeta>Auth · **owner / admin**</EndpointMeta>
+Policy determines which certified models a team may use. Grant edits remain available on a running service during registry-verification outages, subject to normal authorization and mutation checks. Saving an allowed grant does not bypass independent verification: gateway calls still return `503 model_registry_unavailable` until verification recovers, or `403 model_not_allowed` for a disallowed model.
 
 ```bash
-curl "https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering" \
+curl 'https://api.s46.dev/v1/admin/model-policies?team=%40s46%2Fengineering' \
   -H "Authorization: Bearer $S46_ACCESS_TOKEN"
 
-curl -X PUT "https://api.s46.dev/v1/admin/model-policies" \
+# Set MODEL_ID to a public ID from the certified catalog.
+curl -X PUT https://api.s46.dev/v1/admin/model-policies \
   -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
+  -H 'Content-Type: application/json' \
   -H "Idempotency-Key: policy-$(uuidgen)" \
-  -d '{"team":"@s46/engineering","modelId":"s46/devstral-small-2-24b","allowed":true}'
+  -d "{\"team\":\"@s46/engineering\",\"modelId\":\"$MODEL_ID\",\"allowed\":true}"
 ```
 
-```json
-{
-  "team": "@s46/engineering",
-  "modelId": "s46/devstral-small-2-24b",
-  "allowed": true,
-  "revision": 1,
-  "etag": "\"1\""
-}
-```
-
-<Note tag="Resolution">
-  Consumers should read the effective list from `GET /v1/teams/{team}` (`defaultModel` + `models`) rather than hard-coding model ids.
-</Note>
+Read effective authorized models from `GET /v1/teams/{team}`, not from unfiltered gateway discovery or a hard-coded default.

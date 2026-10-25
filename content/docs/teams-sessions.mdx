@@ -1,52 +1,23 @@
 ---
 title: Teams & sessions
-description: Resolve team runtime configuration, then list and operate sessions for that team.
+description: Resolve authorized models and gateway configuration; list team sessions.
 ---
-
-Discover how a team should run work, then operate sessions for that team. Resolve a team's gateway config first, then list and act on its sessions.
-
-<Note tag="Escaping">
-  `{team}` and `{sessionId}` must be escaped. A session id may contain `/` — e.g. `@dscape/auth-redirect-fix` → `%40dscape%2Fauth-redirect-fix`.
-</Note>
 
 <RouteIndex page="teamsSessions" />
 
-## Route inventory
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/v1/teams/{team}` | Resolve team metadata & gateway configuration. |
-| `GET` | `/v1/sessions?team={team}` | List sessions for a team. |
-| `POST` | `/v1/sessions/{id}/detach` | Detach an active session into control-plane state. |
-| `POST` | `/v1/sessions/{id}/resume` | Resume remotely or materialize locally. |
-| `POST` | `/v1/sessions/{id}/attach` | Return attach transport metadata once available. |
-| `GET` | `/v1/sessions/{id}/stream` | Stream remote-session handoff events as SSE. |
-| `POST` | `/v1/sessions/{id}/land` | Queue policy-gated landing / review work. |
-
 ## Resolve team metadata
 
-<Method method="GET" path="/v1/teams/{team}" returns="200" />
-
-Use the returned `endpoint`, `region`, `defaultModel`, and `models` instead of hard-coding production values. Optional dev query params: `endpoint`, `region`, `mode`, `defaultModel`.
-
+<Method method="GET" path="/v1/teams/{team}" returns="200 / 503" />
 <EndpointMeta>Auth · **bearer / cookie**</EndpointMeta>
 
+Path-escape the canonical team ID: `@s46/engineering` becomes `%40s46%2Fengineering`. Use the returned `endpoint`, `region`, and authorized `models` rather than hard-coding them. `defaultModel` is a configured preference: check that it appears in `models` before selecting it.
+
 ```bash
-curl https://api.s46.dev/v1/teams/%40s46%2Fengineering \
+curl 'https://api.s46.dev/v1/teams/%40s46%2Fengineering' \
   -H "Authorization: Bearer $S46_ACCESS_TOKEN"
 ```
 
-```ts
-const team = await fetch(
-  "https://api.s46.dev/v1/teams/%40s46%2Fengineering",
-  { headers: { Authorization: `Bearer ${accessToken}` } },
-).then((r) => r.json());
-```
-
-```py
-team = requests.get("https://api.s46.dev/v1/teams/%40s46%2Fengineering",
-                    headers={"Authorization": f"Bearer {access_token}"}).json()
-```
+Illustrative cloud response (limits come from the verified registry, not client constants):
 
 ```json
 {
@@ -57,184 +28,30 @@ team = requests.get("https://api.s46.dev/v1/teams/%40s46%2Fengineering",
   "region": "EU-OPO",
   "mode": "cloud",
   "workerHosts": [],
-  "defaultModel": "s46/devstral-small-2-24b",
-  "models": ["s46/devstral-small-2-24b"]
-}
-```
-
-## List sessions
-
-<Method method="GET" path="/v1/sessions?team={team}" returns="200" />
-
-Session payloads use `region`, not `lane`.
-
-```bash
-curl "https://api.s46.dev/v1/sessions?team=%40s46%2Fengineering" \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
-```
-
-```ts
-const { sessions } = await fetch(
-  "https://api.s46.dev/v1/sessions?team=%40s46%2Fengineering",
-  { headers: { Authorization: `Bearer ${accessToken}` } },
-).then((r) => r.json());
-```
-
-```py
-sessions = requests.get("https://api.s46.dev/v1/sessions",
-                        params={"team": "@s46/engineering"},
-                        headers={"Authorization": f"Bearer {access_token}"}).json()
-```
-
-```json
-{
-  "sessions": [
-    {
-      "id": "@dscape/auth-redirect-fix",
-      "state": "running",
-      "harness": "pi",
-      "location": "worker:worker_01",
-      "region": "EU-OPO",
-      "model": "s46/devstral-small-2-24b",
-      "age": "4m",
-      "spent": "€0.00",
-      "task": "Fix auth redirect"
+  "defaultModel": "s46/example-published-model",
+  "models": ["s46/example-published-model"],
+  "modelMetadata": {
+    "s46/example-published-model": {
+      "contextWindow": 32768,
+      "maxTokens": 4096,
+      "reasoning": false
     }
-  ]
-}
-```
-
-## Detach & resume
-
-<Method method="POST" path="/v1/sessions/{id}/detach?team={team}" />
-<Method method="POST" path="/v1/sessions/{id}/resume?team={team}" />
-
-Detach returns the updated session object (it is job-backed on the control plane). Resume defaults to `target: "remote"`; `target: "local"` asks the consumer to materialize locally when supported.
-
-```bash
-curl -X POST "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/resume?team=%40s46%2Fengineering" \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "target": "remote" }'
-```
-
-```ts
-const session = await fetch(
-  "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/resume?team=%40s46%2Fengineering",
-  {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ target: "remote" }),
-  },
-).then((r) => r.json());
-```
-
-```py
-session = requests.post(
-    "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/resume",
-    params={"team": "@s46/engineering"},
-    headers={"Authorization": f"Bearer {access_token}"},
-    json={"target": "remote"},
-).json()
-```
-
-## Attach & stream
-
-<Method method="POST" path="/v1/sessions/{id}/attach?team={team}" returns="200 / 428" />
-<Method method="GET" path="/v1/sessions/{id}/stream?team={team}" returns="SSE" />
-
-Attach returns transport metadata when the remote session is attachable; if the session is still queued, the API returns `428 authorization_pending`. The stream is `text/event-stream`.
-
-```bash
-# Request attach transport metadata
-curl -X POST "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/attach?team=%40s46%2Fengineering" \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
-
-# Then consume the SSE stream
-curl -N "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/stream?team=%40s46%2Fengineering" \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
-```
-
-```ts
-const attach = await fetch(
-  "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/attach?team=%40s46%2Fengineering",
-  { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } },
-).then((r) => r.json());
-// then consume attach.url as a text/event-stream
-```
-
-```py
-attach = requests.post(
-    "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/attach",
-    params={"team": "@s46/engineering"},
-    headers={"Authorization": f"Bearer {access_token}"},
-).json()
-# then consume attach["url"] as a text/event-stream
-```
-
-```json
-{
-  "sessionId": "@dscape/auth-redirect-fix",
-  "url": "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/stream?team=%40s46%2Fengineering",
-  "protocol": "sse"
-}
-```
-
-```bash
-event: session
-data: {"id":"@dscape/auth-redirect-fix","state":"running","location":"worker:worker_01"}
-```
-
-## Land
-
-<Method method="POST" path="/v1/sessions/{id}/land?team={team}" returns="200" />
-
-Queue policy-gated landing / review work. The response includes landing and review metadata.
-
-```bash
-curl -X POST "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/land?team=%40s46%2Fengineering" \
-  -H "Authorization: Bearer $S46_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "title": "Fix auth redirect" }'
-```
-
-```ts
-const landing = await fetch(
-  "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/land?team=%40s46%2Fengineering",
-  {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ title: "Fix auth redirect" }),
-  },
-).then((r) => r.json());
-```
-
-```py
-landing = requests.post(
-    "https://api.s46.dev/v1/sessions/%40dscape%2Fauth-redirect-fix/land",
-    params={"team": "@s46/engineering"},
-    headers={"Authorization": f"Bearer {access_token}"},
-    json={"title": "Fix auth redirect"},
-).json()
-```
-
-```json
-{
-  "id": "@dscape/auth-redirect-fix",
-  "title": "Fix auth redirect",
-  "branch": "dscape/auth-redirect-fix",
-  "ranOn": ["worker_01"],
-  "harness": "pi",
-  "model": "s46/devstral-small-2-24b",
-  "cost": "€0.00",
-  "status": "ready_for_review",
-  "pullRequestUrl": "https://github.com/sovereign46/app/pull/42",
-  "review": {
-    "summary": "Ready for review.",
-    "checklist": ["Tests pass", "Review changes"],
-    "suggestedCommands": ["npm test"]
   }
 }
 ```
 
-{/* OpenAPI coverage: /v1/sessions/{sessionId}/detach /v1/sessions/{sessionId}/resume /v1/sessions/{sessionId}/attach /v1/sessions/{sessionId}/stream /v1/sessions/{sessionId}/land */}
+The response above is fictional contract data, not a claim that any named model is live. On this public cloud resolution route, `models` contains only servable, team-allowed IDs; `modelMetadata` maps those same IDs to signed runtime metadata. [Admin team settings](/docs/admin#team-settings) are configured values, not this authorized discovery view. Runtime fields include engine/version, profile digest, context/output limits, reasoning capability, and memory hints; optional fields may be absent. This authenticates metadata, not loaded checkpoint bytes. Airplane teams use local settings and may return `modelMetadata: null`.
+
+When independent verification is required but unavailable, cloud resolution returns `503 model_registry_unavailable`. An empty authorized list is not permission to use an arbitrary model. Optional development overrides are `endpoint`, `region`, `mode`, and `defaultModel`.
+
+## List sessions
+
+<Method method="GET" path="/v1/sessions?team={team}" returns="200" />
+<EndpointMeta>Auth · **bearer / cookie**</EndpointMeta>
+
+```bash
+curl 'https://api.s46.dev/v1/sessions?team=%40s46%2Fengineering' \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+```
+
+Returns `{ "sessions": [...] }`. Each session contains `id`, `state`, `harness`, `location`, `region`, `model`, `age`, `spent`, and `task`. Use `region`, not `lane`. This route lists sessions; it does not expose remote session-control actions.

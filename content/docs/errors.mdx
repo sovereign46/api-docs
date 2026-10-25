@@ -3,7 +3,7 @@ title: Errors & status codes
 description: Stable JSON error envelope and code catalog.
 ---
 
-Every JSON failure uses one envelope. Branch on **HTTP status** plus **`error.code`** — never parse `message`; it is human-readable and may change.
+JSON API errors use the envelope below. Branch on **HTTP status** plus **`error.code`**, not the human-readable `message`. Exceptions: [readiness](/docs/operations#readiness) returns a status body, and failures after streaming begins use protocol-specific [stream events](/docs/gateway#streaming).
 
 ## The envelope
 
@@ -28,18 +28,19 @@ Grouped by status class. Every `code` below is stable and safe to switch on.
 | --- | --- | --- |
 | `400` | `invalid_request` | Malformed path/query/body value, or an unsupported state. |
 | `400` | `bad_json` | Request body is not valid JSON. |
+| `400` | `unsupported_feature` | Responses/Anthropic input uses a feature outside the supported cloud subset. |
 | `401` | `authenticate_first` | Browser/device approval needs an authenticated magic-link session first. |
 | `401` | `unauthorized` | Missing, expired, revoked, or invalid bearer / cookie / worker credential. |
 | `403` | `not_invited` | Email is not currently invited, or the invitation was revoked. |
 | `403` | `forbidden` | Authenticated user lacks the owner/admin role, or the action is disallowed. |
-| `403` | `model_not_allowed` | Requested model is not certified/allowed for the caller's team. |
+| `403` | `model_not_allowed` | Requested model is not currently authorized and available for the caller's team. |
 | `404` | `not_found` | Target does not exist or is not visible to the credential. |
 | `405` | `method_not_allowed` | Route exists but the HTTP method is unsupported. |
 | `409` | `conflict` | Resource conflict or duplicate state. |
 | `409` | `idempotency_conflict` | `Idempotency-Key` reused with different parameters. |
 | `410` | `expired` | Login, magic link, or token expired. |
 | `412` | `precondition_failed` | `If-Match` revision / ETag is stale. |
-| `428` | `authorization_pending` | Polling target is not ready yet — see contexts below . |
+| `428` | `authorization_pending` | Polling target is not ready yet — see contexts below. |
 | `428` | `precondition_required` | A required header such as `Idempotency-Key` is missing. |
 | `429` | `rate_limited` | Request or stream rate limit exceeded. |
 | `429` | `capacity_limited` | Capacity exists but is temporarily saturated. |
@@ -49,7 +50,9 @@ Grouped by status class. Every `code` below is stable and safe to switch on.
 | HTTP | Code | When it fires |
 | --- | --- | --- |
 | `503` | `email_unavailable` | Invite or magic-link email delivery is not configured or failed. |
+| `503` | `model_registry_unavailable` | Independent registry verification has not succeeded or is no longer current. |
 | `503` | `model_unavailable` | No ready upstream/local model worker is available. |
+| `502` | `upstream_error` | Model upstream request, status, or response failed. |
 | `503` | `service_unavailable` | Control service is unavailable. |
 | `503` | `rate_limiter_unavailable` | Rate-limiter backend is unavailable. |
 | `500` | `internal_error` | Unhandled server-side failure. |
@@ -59,7 +62,6 @@ Grouped by status class. Every `code` below is stable and safe to switch on.
 This one code is shared by several polling-style endpoints — the caller should retry later. Branch on *endpoint context*, not on the assumption that it always means device login:
 
 - Device login waiting for magic-link approval.
-- Session attach or stream waiting for a queued remote session.
 - Worker job leasing when no compatible work is available yet, or the worker cannot lease.
 
 ## Client guidance
@@ -69,5 +71,7 @@ This one code is shared by several polling-style endpoints — the caller should
 | `authorization_pending` | Retry after the endpoint-specific polling interval, or use exponential backoff. |
 | `401 unauthorized` | Refresh credentials only if you hold a valid refresh token/cookie; otherwise restart login. |
 | `403 forbidden` / `model_not_allowed` | Do not retry blindly — change credentials, membership, or model policy first. |
+| `503 model_registry_unavailable` | Wait for service verification to recover; refreshing credentials or changing model policy does not repair trust. |
+| `400 invalid_request` / `unsupported_feature` | Correct the payload, limits, or unsupported feature; do not retry unchanged. |
 | retrying mutations | Preserve and reuse the same `Idempotency-Key` for safe retries. |
 | `error.message` | Do not parse it — it is human-readable and may change. Use `code`. |

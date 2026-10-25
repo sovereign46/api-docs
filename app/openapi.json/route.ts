@@ -4,6 +4,10 @@ type SecurityRequirement = Array<Record<string, string[]>>;
 
 const bearerSecurity: SecurityRequirement = [{ bearerAuth: [] }];
 const gatewayServers = [{ url: 'https://gateway.s46.dev', description: 'Production harness gateway' }];
+const workerAdminAccess = {
+  security: [...bearerSecurity, { operatorBearerAuth: [] }, { operatorAdminHeader: [] }],
+  description: 'Requires admin admission, then authorization against the stored worker team, else organization. Global workers (both scopes empty) require operator credentials. Request scope hints do not replace the persisted resource scope.',
+};
 
 function ref(name: string) {
   return { $ref: `#/components/schemas/${name}` };
@@ -87,7 +91,7 @@ function headerParam(name: string, description: string, required = false) {
 }
 
 const errorResponses = {
-  '400': response('Invalid request', ref('ErrorResponse')),
+  '400': response('invalid_request, bad_json, or unsupported_feature (unsupported protocol feature)', ref('ErrorResponse')),
   '401': response('Unauthorized', ref('ErrorResponse')),
   '403': response('Forbidden', ref('ErrorResponse')),
   '404': response('Not found', ref('ErrorResponse')),
@@ -98,7 +102,8 @@ const errorResponses = {
   '428': response('Authorization pending or precondition required', ref('ErrorResponse')),
   '429': response('Rate limited', ref('ErrorResponse')),
   '500': response('Internal error', ref('ErrorResponse')),
-  '503': response('Service unavailable', ref('ErrorResponse')),
+  '502': response('upstream_error: model upstream request or response failed', ref('ErrorResponse')),
+  '503': response('Service unavailable; model_registry_unavailable means independent registry verification is unavailable, while model_unavailable means no serving upstream is configured', ref('ErrorResponse')),
 };
 
 type OperationOptions = {
@@ -180,23 +185,32 @@ function gatewayGet(summary: string, operationId: string, output: unknown) {
 }
 
 function gatewayPost(summary: string, operationId: string, input: unknown, output: unknown) {
-  return operation(['Harness gateway'], summary, operationId, {
-    security: bearerSecurity,
-    servers: gatewayServers,
-    requestBody: requestBody(input),
-    responses: {
-      '200': response(summary, output),
-      ...errorResponses,
-    },
-  });
+  return {
+    ...operation(['Harness gateway'], summary, operationId, {
+      security: bearerSecurity,
+      servers: gatewayServers,
+      requestBody: requestBody(input),
+      responses: {
+        '200': {
+          description: `${summary}. Streaming errors are reported in the event stream after headers are sent.`,
+          content: {
+            'application/json': { schema: output },
+            'text/event-stream': { schema: { type: 'string' } },
+          },
+        },
+        ...errorResponses,
+      },
+    }),
+    description: 'Bearer authentication and independent registry verification are required in production and verification-enabled development. The authorized public model ID is mapped to a shared Chat Completions backend. See /docs/gateway for protocol subsets and stream events.',
+  };
 }
 
 const openapi = {
   openapi: '3.1.0',
   info: {
     title: 'Sovereign46 API',
-    version: '1.0.0',
-    description: 'Production contract for Sovereign46 API consumers, admin tooling, workers, and model gateway integrations.',
+    version: 'unreleased',
+    description: 'Current source contract for Sovereign46 API consumers. Runtime metadata, normalized cloud protocols, independent-policy gates, session-control removal, and operator-only worker provisioning are pending release; this document does not establish deployed availability. See /docs#release-status.',
   },
   servers: [
     { url: 'https://api.s46.dev', description: 'Production control plane' },
@@ -219,7 +233,14 @@ const openapi = {
       get: publicGet(['Operations'], 'Liveness check', 'healthz', ref('HealthResponse')),
     },
     '/readyz': {
-      get: publicGet(['Operations'], 'Readiness check', 'readyz', ref('ReadyResponse')),
+      get: operation(['Operations'], 'Readiness check', 'readyz', {
+        security: null,
+        responses: {
+          '200': response('Configured database and any enabled independent registry checks passed', ref('ReadyResponse')),
+          '405': errorResponses['405'],
+          '503': response('Database or independent registry verification unavailable; this status body is not an ErrorResponse', ref('ReadyResponse')),
+        },
+      }),
     },
     '/debug/vars': {
       get: authenticatedGet(['Operations'], 'Expvar diagnostics', 'debugVars', { type: 'object', additionalProperties: true }),
@@ -229,24 +250,6 @@ const openapi = {
         security: null,
         responses: {
           '200': textResponse('CSS stylesheet', 'text/css'),
-          ...errorResponses,
-        },
-      }),
-    },
-    '/session': {
-      get: operation(['Support'], 'Session handoff shell', 'sessionShell', {
-        security: null,
-        responses: {
-          '200': htmlResponse('HTML session handoff shell'),
-          ...errorResponses,
-        },
-      }),
-    },
-    '/session/': {
-      get: operation(['Support'], 'Session handoff shell', 'sessionShellSlash', {
-        security: null,
-        responses: {
-          '200': htmlResponse('HTML session handoff shell'),
           ...errorResponses,
         },
       }),
@@ -371,7 +374,7 @@ const openapi = {
       }),
     },
     '/v1/teams/{team}': {
-      get: authenticatedGet(['Teams and sessions'], 'Resolve team metadata', 'team', ref('Team'), [
+      get: authenticatedGet(['Teams and sessions'], 'Resolve team settings and authorized cloud models', 'team', ref('Team'), [
         pathParam('team', 'Canonical team id', '%40s46%2Fengineering'),
         queryParam('endpoint', 'Development endpoint override'),
         queryParam('region', 'Development region override'),
@@ -382,19 +385,6 @@ const openapi = {
     '/v1/sessions': {
       get: authenticatedGet(['Teams and sessions'], 'List sessions for a team', 'listSessions', collection('sessions', ref('Session')), [queryParam('team', 'Canonical team id', true)]),
     },
-    '/v1/sessions/{sessionId}/detach': sessionAction('detach', ref('DetachRequest'), ref('Session')),
-    '/v1/sessions/{sessionId}/resume': sessionAction('resume', ref('ResumeRequest'), ref('Session')),
-    '/v1/sessions/{sessionId}/attach': sessionAction('attach', ref('AttachRequest'), ref('AttachResult')),
-    '/v1/sessions/{sessionId}/stream': {
-      get: operation(['Teams and sessions'], 'Stream session handoff events', 'streamSession', {
-        parameters: [pathParam('sessionId', 'Session id', '%40dscape%2Fauth-redirect-fix'), queryParam('team', 'Canonical team id', true)],
-        responses: {
-          '200': textResponse('SSE session stream', 'text/event-stream'),
-          ...errorResponses,
-        },
-      }),
-    },
-    '/v1/sessions/{sessionId}/land': sessionAction('land', ref('LandRequest'), ref('LandResult')),
     '/v1/admin/overview': {
       get: adminGet('Admin overview', 'adminOverview', ref('Overview'), [queryParam('organization', 'Organization slug'), queryParam('team', 'Canonical team id')]),
     },
@@ -465,11 +455,14 @@ const openapi = {
       get: adminGet('Person audit events', 'personAudit', collection('auditEvents', ref('AuditEvent')), [pathParam('email', 'Email address', 'dscape%40s46.dev'), queryParam('organization', 'Organization slug', true), queryParam('team', 'Canonical team id'), queryParam('limit', 'Maximum events')]),
     },
     '/v1/admin/teams': {
-      get: adminGet('List teams', 'listAdminTeams', collection('teams', ref('Team')), [queryParam('team', 'Canonical team id')]),
+      get: adminGet('List stored team settings, not authorized model discovery', 'listAdminTeams', collection('teams', ref('Team')), [queryParam('team', 'Canonical team id')]),
       post: adminWrite('Create team', 'createTeam', ref('Team'), ref('Team')),
     },
     '/v1/admin/teams/{team}': {
-      get: adminGet('Get team', 'getAdminTeam', ref('Team'), [pathParam('team', 'Canonical team id', '%40s46%2Fengineering')]),
+      get: {
+        ...adminGet('Read stored team settings, not authorized model discovery', 'getAdminTeam', ref('Team'), [pathParam('team', 'Canonical team id', '%40s46%2Fengineering')]),
+        description: 'On a running service, registry verification outages do not block settings reads. Existing authentication and scope checks still apply. Use public GET /v1/teams/{team} for authorized cloud models and runtime metadata.',
+      },
       put: adminWrite('Update team', 'putTeam', ref('Team'), ref('Team'), '200', [pathParam('team', 'Canonical team id', '%40s46%2Fengineering')]),
       patch: adminWrite('Patch team', 'patchTeam', ref('Team'), ref('Team'), '200', [pathParam('team', 'Canonical team id', '%40s46%2Fengineering')]),
       delete: operation(['Admin'], 'Delete team', 'deleteTeam', {
@@ -521,7 +514,7 @@ const openapi = {
       post: modelAdminWrite('Queue signed model yank and block serving', 'queueModelYank', ref('ModelYankRequest'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Model release id', 'rel_...'), headerParam('If-Match', 'Known release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)]),
     },
     '/v1/admin/models': {
-      get: modelAdminGet('List verified model catalog', 'listModels', ref('ModelCatalogResponse'), [queryParam('organization', 'Organization slug'), queryParam('team', 'Canonical team id')]),
+      get: modelAdminGet('Inspect registry catalog and verification state', 'listModels', ref('ModelCatalogResponse'), [queryParam('organization', 'Organization slug'), queryParam('team', 'Canonical team id')]),
     },
     '/v1/admin/model-policies': {
       get: modelAdminGet('List team model policies', 'listModelPolicies', collection('modelPolicies', ref('TeamModelPolicy')), [queryParam('team', 'Canonical team id', true)]),
@@ -532,16 +525,16 @@ const openapi = {
       get: adminGet('List workers', 'listWorkers', collection('workers', ref('Worker')), [queryParam('team', 'Canonical team id'), queryParam('kind', 'Worker kind'), queryParam('region', 'Region'), queryParam('state', 'Worker state')]),
     },
     '/v1/admin/workers/{id}': {
-      get: adminGet('Get worker with recent logs', 'getWorker', ref('WorkerWithLogs'), [pathParam('id', 'Worker id', 'worker_01')]),
+      get: { ...adminGet('Get worker with recent logs', 'getWorker', ref('WorkerWithLogs'), [pathParam('id', 'Worker id', 'worker_01')]), ...workerAdminAccess },
     },
     '/v1/admin/workers/{id}/logs': {
-      get: adminGet('Read worker logs', 'workerLogs', collection('logs', ref('WorkerLog')), [pathParam('id', 'Worker id', 'worker_01'), queryParam('limit', 'Maximum log rows')]),
+      get: { ...adminGet('Read worker logs', 'workerLogs', collection('logs', ref('WorkerLog')), [pathParam('id', 'Worker id', 'worker_01'), queryParam('limit', 'Maximum log rows')]), ...workerAdminAccess },
     },
     '/v1/admin/workers/{id}/drain': {
-      post: adminWrite('Drain worker', 'drainWorker', ref('EmptyObject'), ref('Worker'), '200', [pathParam('id', 'Worker id', 'worker_01')]),
+      post: { ...adminWrite('Drain worker', 'drainWorker', ref('EmptyObject'), ref('Worker'), '200', [pathParam('id', 'Worker id', 'worker_01')]), ...workerAdminAccess },
     },
     '/v1/admin/workers/{id}/revoke': {
-      post: adminWrite('Revoke worker', 'revokeWorker', ref('EmptyObject'), ref('Worker'), '200', [pathParam('id', 'Worker id', 'worker_01')]),
+      post: { ...adminWrite('Revoke worker', 'revokeWorker', ref('EmptyObject'), ref('Worker'), '200', [pathParam('id', 'Worker id', 'worker_01')]), ...workerAdminAccess },
     },
     '/v1/admin/jobs': {
       get: adminGet('List jobs', 'listJobs', collection('jobs', ref('Job')), [queryParam('team', 'Canonical team id'), queryParam('state', 'Job state'), queryParam('sessionId', 'Session id'), queryParam('kind', 'Job kind')]),
@@ -573,13 +566,32 @@ const openapi = {
       post: adminWrite('Seed defaults', 'adminSeed', ref('EmptyObject'), ref('SeedResponse')),
     },
     '/v1/worker/register': {
-      post: authenticatedWrite(['Worker control'], 'Register worker', 'registerWorker', ref('WorkerRegistration'), ref('WorkerRegistrationResult'), '201'),
+      post: {
+        ...operation(['Worker control'], 'Provision worker with operator credentials', 'registerWorker', {
+          security: [{ operatorBearerAuth: [] }, { operatorAdminHeader: [] }],
+          requestBody: requestBody(ref('WorkerRegistration')),
+          responses: {
+            '201': response('Worker provisioned; returned credential is for subsequent worker calls, not provisioning', ref('WorkerRegistrationResult')),
+            '400': response('invalid_request: invalid registration or conflicting organization/team scope', ref('ErrorResponse')),
+            '403': response('forbidden: configured operator credentials required; tenant owner/admin/team-admin/viewer and worker credentials cannot register any scope or replace any worker ID', ref('ErrorResponse')),
+            '404': response('not_found: referenced team or organization does not exist', ref('ErrorResponse')),
+            '405': errorResponses['405'],
+            '409': errorResponses['409'],
+            '500': errorResponses['500'],
+            '503': response('service_unavailable: control service unavailable', ref('ErrorResponse')),
+          },
+        }),
+        description: 'Production provisioning requires the configured S46_ADMIN_TOKEN for every scope and worker ID, including replacements. Non-production retains bootstrap access only when no operator token is configured. The operator-only boundary does not retroactively revoke issued credentials; same-ID replacement rotates that worker credential. Provisioning is not VM, loaded-model, or certification attestation.',
+      },
     },
     '/v1/worker/heartbeat': {
       post: workerWrite('Heartbeat worker', 'heartbeatWorker', ref('WorkerHeartbeatEnvelope'), ref('Worker')),
     },
     '/v1/worker/jobs/lease': {
-      post: workerWrite('Lease a job', 'leaseJob', ref('LeaseRequest'), ref('LeaseResult')),
+      post: {
+        ...workerWrite('Lease a job', 'leaseJob', ref('LeaseRequest'), ref('LeaseResult')),
+        description: 'Leasing checks current stored worker fields and credential under the lease lock. Nonempty organization scope and optional team scope constrain matching; both empty intentionally permit a cross-organization operator pool. Model lifecycle jobs require model_certification for model.certify or model_registry_publish for model.publish/model.yank, regardless of advertised model IDs. These checks do not attest workload execution.',
+      },
     },
     '/v1/worker/jobs/complete': {
       post: workerWrite('Complete a job lease', 'completeJob', ref('CompleteJobRequest'), ref('Job')),
@@ -621,19 +633,21 @@ const openapi = {
         type: 'http',
         scheme: 'bearer',
       },
+      operatorBearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        description: 'Configured S46_ADMIN_TOKEN, not a tenant user token or worker credential. Keep this operator secret out of tenant clients.',
+      },
+      operatorAdminHeader: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-S46-Admin-Token',
+        description: 'Alternative transport for the configured S46_ADMIN_TOKEN; used only when no bearer credential is supplied.',
+      },
     },
     schemas: buildSchemas(),
   },
 };
-
-function sessionAction(action: string, input: unknown, output: unknown) {
-  return {
-    post: authenticatedWrite(['Teams and sessions'], `${action[0]?.toUpperCase() ?? ''}${action.slice(1)} session`, `${action}Session`, input, output, '200', [
-      pathParam('sessionId', 'Session id', '%40dscape%2Fauth-redirect-fix'),
-      queryParam('team', 'Canonical team id', true),
-    ]),
-  };
-}
 
 function buildSchemas() {
   const timestamp = { type: 'string', format: 'date-time' };
@@ -676,7 +690,22 @@ function buildSchemas() {
       },
     },
     HealthResponse: { type: 'object', properties: { status: { type: 'string' } } },
-    ReadyResponse: { type: 'object', properties: { status: { type: 'string' }, database: { type: 'string' } } },
+    ReadyResponse: {
+      type: 'object',
+      required: ['status', 'database'],
+      properties: {
+        status: { type: 'string', enum: ['ok', 'unavailable'] },
+        database: { type: 'string', enum: ['ok', 'disabled', 'unavailable'] },
+        modelRegistry: { type: 'string', enum: ['unavailable'], description: 'Present only when the enabled independent registry check fails, after the database check passes.' },
+      },
+      examples: [
+        { status: 'ok', database: 'ok' },
+        { status: 'ok', database: 'disabled' },
+        { status: 'unavailable', database: 'unavailable' },
+        { status: 'unavailable', database: 'ok', modelRegistry: 'unavailable' },
+        { status: 'unavailable', database: 'disabled', modelRegistry: 'unavailable' },
+      ],
+    },
     OKResponse: { type: 'object', properties: { ok: { type: 'boolean' } } },
     RemovedResponse: { type: 'object', properties: { removed: { type: 'boolean' } } },
     DeletedTeamResponse: { type: 'object', properties: { deleted: { type: 'boolean' }, team: { type: 'string' } } },
@@ -851,6 +880,7 @@ function buildSchemas() {
     },
     Team: {
       type: 'object',
+      description: 'Shared team settings shape. Public GET /v1/teams/{team} resolves authorized cloud models and runtime metadata under the registry gate. Admin team routes read/write configured settings instead; their model fields are not serving authority.',
       properties: {
         id: { type: 'string' },
         name: { type: 'string' },
@@ -861,8 +891,9 @@ function buildSchemas() {
         region: { type: 'string' },
         mode: { type: 'string' },
         workerHosts: { type: 'array', items: { type: 'string' } },
-        defaultModel: { type: 'string' },
-        models: { type: 'array', items: { type: 'string' } },
+        defaultModel: { type: 'string', description: 'Configured preference; may be absent from the currently authorized model list.' },
+        models: { type: ['array', 'null'], items: { type: 'string' }, description: 'Public cloud team resolution returns servable, team-allowed IDs. Admin responses contain configured IDs (possibly null), not an authorized discovery list.' },
+        modelMetadata: { type: ['object', 'null'], additionalProperties: ref('ModelRuntime'), description: 'Responses include this field. Only public cloud team resolution recomputes the authoritative authorized runtime map. Admin/local settings may return null; stored or submitted metadata does not establish serving trust.' },
         monthlyCapMicros: { type: 'integer' },
         memberCount: { type: 'integer' },
         deviceCount: { type: 'integer' },
@@ -886,30 +917,26 @@ function buildSchemas() {
         task: { type: 'string' },
       },
     },
-    DetachRequest: { type: 'object', properties: { sessionId: { type: 'string' }, harness: { type: 'string' }, workerHost: { type: 'string' }, team: ref('Team') } },
-    ResumeRequest: { type: 'object', properties: { sessionId: { type: 'string' }, session: ref('Session'), team: ref('Team'), target: { type: 'string', enum: ['remote', 'local'] } } },
-    AttachRequest: { type: 'object', properties: { sessionId: { type: 'string' }, team: ref('Team') } },
-    LandRequest: { type: 'object', properties: { sessionId: { type: 'string' }, session: ref('Session'), team: ref('Team'), title: { type: 'string' } } },
-    AttachResult: { type: 'object', properties: { sessionId: { type: 'string' }, url: { type: 'string', format: 'uri' }, protocol: { type: 'string' } } },
-    LandResult: {
+    ModelRuntime: {
       type: 'object',
+      description: 'Signed registry metadata, not verification of loaded checkpoint bytes. Optional fields may be absent.',
+      required: ['reasoning'],
       properties: {
-        id: { type: 'string' },
-        title: { type: 'string' },
-        branch: { type: 'string' },
-        ranOn: { type: 'array', items: { type: 'string' } },
-        harness: { type: 'string' },
-        model: { type: 'string' },
-        cost: { type: 'string' },
-        status: { type: 'string' },
-        pullRequestUrl: { type: 'string', format: 'uri' },
-        blockedReason: { type: 'string' },
-        review: { type: 'object', properties: { summary: { type: 'string' }, checklist: { type: 'array', items: { type: 'string' } }, suggestedCommands: { type: 'array', items: { type: 'string' } } } },
+        engine: { type: 'string' },
+        version: { type: 'string' },
+        profileSha256: { type: 'string' },
+        contextWindow: { type: 'integer' },
+        maxTokens: { type: 'integer' },
+        reasoning: { type: 'boolean', description: 'Model capability; does not imply adapter support for reasoning controls.' },
+        minMemoryBytes: { type: 'integer', format: 'int64' },
+        recommendedMemoryBytes: { type: 'integer', format: 'int64' },
       },
     },
     ModelCatalogEntry: {
       type: 'object',
       properties: {
+        format: { type: 'string', enum: ['gguf', 'safetensors'], description: 'Native safetensors use a package.json inventory; older manifests may omit format.' },
+        runtime: ref('ModelRuntime'),
         id: { type: 'string' },
         displayName: { type: 'string' },
         provider: { type: 'string' },
@@ -932,13 +959,13 @@ function buildSchemas() {
         bundleDigest: { type: 'string' },
         artifactDigest: { type: 'string' },
         releaseSignatureSubjectDigest: { type: 'string' },
-        certified: { type: 'boolean' },
-        published: { type: 'boolean' },
+        certified: { type: 'boolean', description: 'Release/audit evidence passed for this registry entry; not an attestation of currently loaded runtime bytes.' },
+        published: { type: 'boolean', description: 'Release is represented in the verified registry; does not imply activation or serving availability.' },
         yanked: { type: 'boolean' },
         advisoryBlocked: { type: 'boolean' },
         globallyBlocked: { type: 'boolean' },
-        sigsumStatus: { type: 'string' },
-        verificationState: { type: 'string' },
+        sigsumStatus: { type: 'string', description: 'Transparency state observed during registry verification; not a permanent live-health or activation badge.' },
+        verificationState: { type: 'string', description: 'Registry-document verification state, separate from loaded-runtime identity and availability.' },
         verificationError: { type: 'string' },
         advisoryUrls: { type: 'array', items: { type: 'string' } },
         yankUrls: { type: 'array', items: { type: 'string' } },
@@ -1014,6 +1041,7 @@ function buildSchemas() {
     },
     TeamModelPolicyRequest: {
       type: 'object',
+      description: 'Stored model grant edit. On a running service, registry verification outages do not block edits; authentication, scope, ETag, and idempotency rules still apply. Saving or enabling a grant does not reopen model serving without independent verification.',
       required: ['team', 'modelId'],
       properties: {
         team: { type: 'string' },
@@ -1039,11 +1067,12 @@ function buildSchemas() {
     WorkerModel: workerModel,
     WorkerRegistration: {
       type: 'object',
+      description: 'Operator-provisioned scope. With both organizationSlug and team empty/omitted, the worker intentionally belongs to a global cross-organization operator pool.',
       required: ['kind', 'region', 'version', 'capabilities', 'capacity'],
       properties: {
-        id: { type: 'string' },
-        organizationSlug: { type: 'string' },
-        team: { type: 'string' },
+        id: { type: 'string', description: 'Optional worker ID. An operator may replace an existing ID, rotating that worker credential.' },
+        organizationSlug: { type: 'string', description: 'Must name an existing organization when used without team; when team is supplied, must match its derived organization.' },
+        team: { type: 'string', description: 'Optional existing canonical team ID; its organization is resolved even when organizationSlug is supplied.' },
         kind: { type: 'string', enum: ['model_worker', 'execution_worker', 'hybrid_worker'] },
         region: { type: 'string' },
         version: { type: 'string' },
@@ -1079,7 +1108,11 @@ function buildSchemas() {
       },
     },
     WorkerWithLogs: { type: 'object', properties: { worker: ref('Worker'), logs: { type: 'array', items: ref('WorkerLog') } } },
-    WorkerRegistrationResult: { type: 'object', properties: { worker: ref('Worker'), token: { type: 'string' } } },
+    WorkerRegistrationResult: {
+      type: 'object',
+      description: 'Provisioned worker and worker credential. Same-ID replacement rotates that credential; the operator-only boundary does not retroactively revoke other issued credentials. Provisioning does not attest execution, loaded weights, or certification.',
+      properties: { worker: ref('Worker'), token: { type: 'string', description: 'Worker credential for heartbeat, lease, acknowledgement, and completion; not authorization to register workers.' } },
+    },
     WorkerHeartbeat: { type: 'object', properties: { state: { type: 'string' }, capacity, models: { type: 'array', items: { type: 'string' } }, modelDetails: { type: 'array', items: workerModel } } },
     WorkerHeartbeatEnvelope: { type: 'object', required: ['workerId', 'heartbeat'], properties: { workerId: { type: 'string' }, heartbeat: ref('WorkerHeartbeat') } },
     Job: {
@@ -1160,14 +1193,15 @@ function buildSchemas() {
     },
     HarnessPolicy: {
       type: 'object',
+      description: 'Stored team configuration, not CLI drift enforcement or a signed per-job sandbox policy. The example shows defaults returned when no policy is stored; saves do not merge these read defaults except for empty sandboxProfiles and forced exceptionLogging.',
+      examples: [{ team: '@s46/engineering', allowedFunctions: ['read', 'bash', 'edit', 'write'], mandatoryFunctions: [], sandboxProfiles: ['vm-default'], loopEnabled: false, exceptionLogging: true }],
       properties: {
         team: { type: 'string' },
         allowedFunctions: { type: 'array', items: { type: 'string' } },
         mandatoryFunctions: { type: 'array', items: { type: 'string' } },
-        landGates: { type: 'array', items: { type: 'string' } },
-        sandboxProfiles: { type: 'array', items: { type: 'string' } },
+        sandboxProfiles: { type: 'array', items: { type: 'string' }, description: 'An empty list is saved as ["vm-default"].' },
         loopEnabled: { type: 'boolean' },
-        exceptionLogging: { type: 'boolean' },
+        exceptionLogging: { type: 'boolean', description: 'Forced to true on save; does not itself implement an enforcement engine.' },
         config: stringMap,
         updatedAt: timestamp,
       },
@@ -1246,9 +1280,56 @@ function buildSchemas() {
         has_more: { type: 'boolean' },
       },
     },
-    OpenAIResponsesRequest: { type: 'object', additionalProperties: true, properties: { model: { type: 'string' }, input: {}, stream: { type: 'boolean' } } },
-    OpenAIChatCompletionRequest: { type: 'object', additionalProperties: true, properties: { model: { type: 'string' }, messages: { type: 'array', items: { type: 'object', additionalProperties: true } }, stream: { type: 'boolean' } } },
-    AnthropicMessageRequest: { type: 'object', additionalProperties: true, properties: { model: { type: 'string' }, messages: { type: 'array', items: { type: 'object', additionalProperties: true } }, max_tokens: { type: 'integer' }, stream: { type: 'boolean' } } },
+    OutputTokenLimit: {
+      type: 'integer', minimum: 1, maximum: 2147483647,
+      description: 'Must not exceed the effective catalog limit (maxOutputTokens bounded by contextWindow), when positive limits are available. Omitted limits default to that limit. Multiple supplied aliases must agree; invalid or excessive values return 400 invalid_request.',
+    },
+    OpenAIResponsesRequest: {
+      type: 'object', additionalProperties: false, required: ['input'],
+      description: 'Verified cloud subset: text, function tools/results, and text/JSON output. Send full history; unsupported features return 400 unsupported_feature. Cloud n_predict returns 400 invalid_request.',
+      properties: {
+        model: { type: 'string', description: 'Authorized public ID; omitted uses the configured team default.' },
+        input: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'object', additionalProperties: true } }] },
+        instructions: { type: ['string', 'null'] },
+        stream: { type: 'boolean' },
+        tools: { type: 'array', items: { type: 'object', required: ['type', 'name'], properties: { type: { const: 'function' }, name: { type: 'string' }, description: { type: 'string' }, parameters: { type: 'object' }, strict: { type: 'boolean' } }, additionalProperties: false } },
+        tool_choice: { oneOf: [{ enum: ['auto', 'none', 'required'] }, { type: 'object', required: ['type', 'name'], properties: { type: { const: 'function' }, name: { type: 'string' } }, additionalProperties: false }] },
+        parallel_tool_calls: { type: 'boolean' },
+        temperature: { type: 'number' }, top_p: { type: 'number' },
+        max_output_tokens: ref('OutputTokenLimit'), max_tokens: ref('OutputTokenLimit'), max_completion_tokens: ref('OutputTokenLimit'),
+        store: { enum: [false, null] }, background: { enum: [false, null] },
+        previous_response_id: { enum: ['', null] }, reasoning: { type: 'null' },
+        metadata: { type: 'object', maxProperties: 0 },
+        include: { type: 'array', maxItems: 0 }, truncation: { const: 'disabled' },
+        text: { type: 'object', additionalProperties: false, properties: { format: { type: 'object', description: 'text, json_object, or json_schema output format', properties: { type: { enum: ['text', 'json_object', 'json_schema'] } } } } },
+        client_metadata: { type: 'object', maxProperties: 16, additionalProperties: { type: 'string' }, description: 'Diagnostic-only, not forwarded: keys 1–64 bytes, values at most 512 bytes, aggregate at most 4096 bytes.' },
+        prompt_cache_key: { type: 'string', description: 'At most 256 bytes; advisory only, not forwarded and no cache affinity promised.' },
+      },
+    },
+    OpenAIChatCompletionRequest: {
+      type: 'object', additionalProperties: true,
+      description: 'Chat payload is forwarded to the verified backend after authorization, model mapping, and output-limit validation. max_output_tokens and n_predict are rejected with 400 invalid_request.',
+      properties: {
+        model: { type: 'string', description: 'Authorized public ID; omitted uses the configured team default.' },
+        messages: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        stream: { type: 'boolean' }, max_tokens: ref('OutputTokenLimit'), max_completion_tokens: ref('OutputTokenLimit'),
+        max_output_tokens: false, n_predict: false,
+      },
+    },
+    AnthropicMessageRequest: {
+      type: 'object', additionalProperties: false, required: ['messages'],
+      description: 'Verified cloud text/function-tool subset. Attachments, thinking, server tools, and context management return 400 unsupported_feature. Output limits follow the catalog; max_tokens may be omitted.',
+      properties: {
+        model: { type: 'string', description: 'Authorized public ID; omitted uses the configured team default.' },
+        messages: { type: 'array', minItems: 1, items: { type: 'object', properties: { role: { enum: ['user', 'assistant'] }, content: { description: 'Text or text/tool_use/tool_result blocks; tool results contain text only.' } } } },
+        system: { description: 'Text or text blocks.' },
+        max_tokens: ref('OutputTokenLimit'), stream: { type: 'boolean' },
+        temperature: { type: 'number' }, top_p: { type: 'number' }, stop_sequences: { type: 'array', items: { type: 'string' } },
+        tools: { type: 'array', items: { type: 'object', description: 'Named function tool with input_schema; server tool types are unsupported.' } },
+        tool_choice: { type: 'object', description: 'type: auto, any, none, or tool (with name); optional disable_parallel_tool_use boolean.' },
+        metadata: { type: 'object' },
+      },
+    },
     OpenAIResponse: { type: 'object', additionalProperties: true },
     OpenAIChatCompletion: { type: 'object', additionalProperties: true },
     AnthropicMessage: { type: 'object', additionalProperties: true },

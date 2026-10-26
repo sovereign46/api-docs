@@ -32,7 +32,7 @@ Manage organizations, people, teams, workers, jobs, schedules, usage, and audit.
 
 ## Shared conventions
 
-- List routes are [cursor-paginated](/docs/conventions#pagination) (`limit` + opaque `cursor`).
+- List query shapes are route-specific. Usage and audit are bounded [`limit`-only lists](/docs/conventions#pagination), not cursor-paginated.
 - Mutations accept an [`Idempotency-Key`](/docs/conventions#idempotency); reusing it with different parameters returns `409 idempotency_conflict`.
 - Updates to mutable resources use [`If-Match`](/docs/conventions#concurrency--etags); a stale revision returns `412 precondition_failed`.
 - All path identifiers (team, email, ids) must be URL path-escaped.
@@ -115,7 +115,7 @@ requests.post(
 <Method method="GET" path="/v1/admin/usage?team={team}" returns="200" />
 <Method method="GET" path="/v1/admin/audit?team={team}" returns="200" />
 
-Usage reports immutable settled events with model, exact release, activation, loaded identity, route incarnation, request identity, token counts, and cost. Production inference events are created by synchronous gateway reservation settlement, not worker completion reports. Audit is an append-only log of privileged actions. Both routes accept bounded list queries.
+Usage reports immutable settled events with model, exact release, activation, loaded identity, route incarnation, request identity, token counts, and cost. Production inference events are created by synchronous gateway reservation settlement, not worker completion reports. Audit is an append-only log of privileged actions. Both routes accept a `team` filter and bounded `limit`; neither accepts or returns a cursor.
 
 <EndpointMeta>Auth · **owner / admin** · Schema · **illustrative**</EndpointMeta>
 
@@ -139,17 +139,15 @@ audit = requests.get("https://api.s46.dev/v1/admin/audit",
 
 ```json
 {
-  "data": [
+  "auditEvents": [
     {
       "at": "2030-01-01T12:00:00Z",
       "actor": "dscape@s46.dev",
       "action": "people.invite",
-      "target": "newhire@s46.dev",
+      "subject": "newhire@s46.dev",
       "team": "@s46/engineering"
     }
-  ],
-  "hasMore": false,
-  "nextCursor": null
+  ]
 }
 ```
 

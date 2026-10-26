@@ -38,7 +38,7 @@ curl -X POST https://api.s46.dev/v1/auth/device/poll \
 
 ## Call the gateway
 
-Use the access token to resolve identity and team gateway settings, then call authenticated gateway discovery for the authoritative production model list. This example checks HTTP failures before using JSON and refuses an unavailable configured default rather than silently choosing another model:
+Use the access token to resolve identity and the configured team default, then call authenticated discovery at the canonical production gateway for the authoritative model list. This example checks HTTP failures before using JSON and refuses an unavailable configured default rather than silently choosing another model:
 
 ```js
 const accessToken = process.env.S46_ACCESS_TOKEN;
@@ -61,7 +61,7 @@ const me = await request("https://api.s46.dev/v1/me");
 const team = await request(
   `https://api.s46.dev/v1/teams/${encodeURIComponent(me.team)}`,
 );
-const gateway = team.endpoint.replace(/\/$/, "");
+const gateway = "https://gateway.s46.dev";
 const discovery = await request(`${gateway}/v1/models`);
 const modelIds = discovery.data.map((model) => model.id);
 if (!modelIds.includes(team.defaultModel)) {
@@ -77,4 +77,4 @@ const completion = await request(
 console.log(completion.choices[0].message.content);
 ```
 
-Do not authorize from the team response's `models` or `modelMetadata`: those are compatibility fields, not exact serving-authority discovery. OpenAI/Codex gateway discovery returns active runtime hints under each model's `metadata`. Raw HTTP may omit `model` to request the configured team default; in production it still must resolve to an active, exact-granted release under current [serving authority](/docs/serving-authority). The gateway reserves worst-case monthly cost before dispatch and settles usage before completing the response or stream terminal. For protocol subsets, output limits, `monthly_cap_exceeded`, and availability failures, see [Gateway](/docs/gateway).
+Do not send the production bearer token to the writable `endpoint` value in the team response; production discovery and inference use `https://gateway.s46.dev`. Custom development endpoints require explicit opt-in and credentials that are not valid on the production control plane. Do not authorize from the team response's `models` or `modelMetadata`: those are compatibility fields, not exact serving-authority discovery. OpenAI/Codex gateway discovery returns active runtime hints under each model's `metadata`. Raw HTTP may omit `model` to request the configured team default; in production it still must resolve to an active, exact-granted release under current [serving authority](/docs/serving-authority). The gateway reserves worst-case monthly cost before dispatch and settles usage before completing the response or stream terminal. For protocol subsets, output limits, `monthly_cap_exceeded`, and availability failures, see [Gateway](/docs/gateway).

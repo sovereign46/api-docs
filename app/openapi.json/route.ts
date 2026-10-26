@@ -140,9 +140,10 @@ function publicGet(tags: string[], summary: string, operationId: string, output:
   });
 }
 
-function authenticatedGet(tags: string[], summary: string, operationId: string, output: unknown, parameters: unknown[] = []) {
+function authenticatedGet(tags: string[], summary: string, operationId: string, output: unknown, parameters: unknown[] = [], servers?: unknown[]) {
   return operation(tags, summary, operationId, {
     parameters,
+    servers,
     responses: {
       '200': response(summary, output),
       ...errorResponses,
@@ -197,14 +198,7 @@ function gatewayGet(summary: string, operationId: string, output: unknown) {
 }
 
 function gatewayModelGet(summary: string, operationId: string, output: unknown) {
-  return operation(['Harness gateway'], summary, operationId, {
-    security: bearerSecurity,
-    servers: gatewayServers,
-    responses: {
-      '200': response(summary, output),
-      ...errorResponses,
-    },
-  });
+  return authenticatedGet(['Harness gateway'], summary, operationId, output, [], gatewayServers);
 }
 
 function gatewayPost(summary: string, operationId: string, input: unknown, output: unknown) {
@@ -609,7 +603,7 @@ const openapi = {
     '/v1/worker/register': {
       post: {
         ...operation(['Worker control'], 'Provision worker with operator credentials', 'registerWorker', {
-          security: [{ operatorBearerAuth: [] }, { operatorAdminHeader: [] }],
+          security: operatorSecurity,
           requestBody: requestBody(ref('WorkerRegistration')),
           responses: {
             '201': response('Worker provisioned; returned credential is for subsequent worker calls, not provisioning', ref('WorkerRegistrationResult')),
@@ -715,6 +709,11 @@ function buildSchemas() {
 
   return {
     EmptyObject: { type: 'object', additionalProperties: false },
+    ExactSHA256: {
+      type: 'string',
+      pattern: '^sha256:[0-9a-f]{64}$',
+      description: 'Exact SHA-256 identity encoded as sha256: followed by 64 lowercase hexadecimal characters.',
+    },
     ErrorResponse: {
       type: 'object',
       required: ['error'],
@@ -937,7 +936,7 @@ function buildSchemas() {
         defaultModel: { type: 'string', description: 'Configured preference. Validate it against authenticated gateway model discovery; neither this field nor the team compatibility list proves current authorization.' },
         models: { type: ['array', 'null'], items: { type: 'string' }, description: 'Compatibility model IDs, not authoritative exact serving-authority discovery. Admin responses contain configured IDs (possibly null). Use authenticated gateway GET /v1/models for production authorization.' },
         modelMetadata: { type: ['object', 'null'], additionalProperties: ref('ModelRuntime'), description: 'Compatibility runtime metadata, not authoritative exact serving-authority discovery. Admin/local settings may return null; stored or submitted metadata does not establish serving trust.' },
-        monthlyCapMicros: { type: 'integer' },
+        monthlyCapMicros: { type: 'integer', format: 'int64', minimum: 0 },
         memberCount: { type: 'integer' },
         deviceCount: { type: 'integer' },
         workerCount: { type: 'integer' },
@@ -968,6 +967,8 @@ function buildSchemas() {
         engine: { type: 'string' },
         version: { type: 'string' },
         profileSha256: { type: 'string' },
+        closureSha256: { type: 'string' },
+        closureSizeBytes: { type: 'integer', format: 'int64' },
         contextWindow: { type: 'integer' },
         maxTokens: { type: 'integer' },
         reasoning: { type: 'boolean', description: 'Model capability; does not imply adapter support for reasoning controls.' },
@@ -978,7 +979,7 @@ function buildSchemas() {
     ModelCatalogEntry: {
       type: 'object',
       properties: {
-        releaseId: { type: 'string', description: 'Immutable sha256 identity of the exact authenticated registry manifest bytes; distinct from rel_ API lifecycle IDs.' },
+        releaseId: { ...ref('ExactSHA256'), description: 'Immutable sha256 identity of the exact authenticated registry manifest bytes; distinct from rel_ API lifecycle IDs.' },
         format: { type: 'string', enum: ['gguf', 'safetensors'], description: 'Native safetensors use a package.json inventory; older manifests may omit format.' },
         runtime: ref('ModelRuntime'),
         id: { type: 'string' },
@@ -1033,26 +1034,26 @@ function buildSchemas() {
       type: 'object',
       description: 'Append-only identity of exact authenticated registry manifest bytes. This sha256 release ID is distinct from the mutable rel_ API release-workflow resource.',
       properties: {
-        id: { type: 'string' },
+        id: ref('ExactSHA256'),
         modelId: { type: 'string' },
         version: { type: 'string' },
-        format: { type: 'string', enum: ['gguf', 'safetensors'] },
+        format: { type: 'string', enum: ['', 'gguf', 'safetensors'], description: 'Historical Devstral identities use the empty value.' },
         filename: { type: 'string' },
         backendModel: { type: 'string' },
-        manifestSha256: { type: 'string' },
+        manifestSha256: ref('ExactSHA256'),
         manifestSizeBytes: { type: 'integer', format: 'int64' },
-        manifestSignatureSha256: { type: 'string' },
+        manifestSignatureSha256: ref('ExactSHA256'),
         manifestSignatureSizeBytes: { type: 'integer', format: 'int64' },
         manifestSigningKeyId: { type: 'string' },
         manifestSigningIssuer: { type: 'string' },
         manifestSigningSubject: { type: 'string' },
-        artifactSha256: { type: 'string' },
+        artifactSha256: ref('ExactSHA256'),
         artifactSizeBytes: { type: 'integer', format: 'int64' },
-        artifactDigest: { type: 'string' },
-        bundleDigest: { type: 'string' },
-        releaseSignatureSubjectDigest: { type: 'string' },
+        artifactDigest: ref('ExactSHA256'),
+        bundleDigest: ref('ExactSHA256'),
+        releaseSignatureSubjectDigest: ref('ExactSHA256'),
         runtime: ref('ModelRuntime'),
-        runtimeIdentitySha256: { type: 'string' },
+        runtimeIdentitySha256: ref('ExactSHA256'),
         registryCreatedAt: timestamp,
         createdAt: timestamp,
       },
@@ -1135,11 +1136,11 @@ function buildSchemas() {
       properties: {
         team: { type: 'string' },
         organizationSlug: { type: 'string' },
-        releaseId: { type: 'string' },
+        releaseId: ref('ExactSHA256'),
         modelId: { type: 'string' },
         allowed: { type: 'boolean' },
-        enabledUnderActivationId: { type: 'string' },
-        authoritySnapshotSha256: { type: 'string' },
+        enabledUnderActivationId: ref('ExactSHA256'),
+        authoritySnapshotSha256: ref('ExactSHA256'),
         revision: { type: 'integer' },
         etag: { type: 'string' },
         createdBy: { type: 'string' },
@@ -1154,7 +1155,7 @@ function buildSchemas() {
       description: 'Creates or updates an exact-release grant. Enabling requires current serving authority for this release. Revocation remains available during authority outages.',
       properties: {
         team: { type: 'string', description: 'May instead be supplied as the team query parameter.' },
-        releaseId: { type: 'string', description: 'Exact sha256 registry release identity; may instead be supplied as the release query parameter.' },
+        releaseId: { ...ref('ExactSHA256'), description: 'Exact sha256 registry release identity; may instead be supplied as the release query parameter.' },
         allowed: { type: 'boolean' },
       },
     },
@@ -1162,11 +1163,11 @@ function buildSchemas() {
       type: 'object',
       description: 'Non-secret operator inspection metadata. The API has no route for submitting or signing activation evidence.',
       properties: {
-        releaseId: { type: 'string' },
+        releaseId: ref('ExactSHA256'),
         modelId: { type: 'string' },
-        deploymentId: { type: 'string' },
-        activationId: { type: 'string' },
-        loadedIdentityId: { type: 'string' },
+        deploymentId: ref('ExactSHA256'),
+        activationId: ref('ExactSHA256'),
+        loadedIdentityId: ref('ExactSHA256'),
         routeId: { type: 'string' },
         instanceId: { type: 'string' },
         activationExpiresAt: timestamp,
@@ -1293,7 +1294,15 @@ function buildSchemas() {
     LeaseRequest: { type: 'object', required: ['workerId'], properties: { workerId: { type: 'string' }, leaseSeconds: { type: 'integer' } } },
     LeaseResult: { type: 'object', properties: { job: ref('Job'), lease: ref('JobLease') } },
     LeaseAckRequest: { type: 'object', required: ['workerId', 'jobId', 'leaseId'], properties: { workerId: { type: 'string' }, jobId: { type: 'string' }, leaseId: { type: 'string' } } },
-    JobCompletion: { type: 'object', properties: { state: { type: 'string', enum: ['succeeded', 'failed', 'canceled'] }, payload: stringMap, usage: { ...ref('UsageEvent'), deprecated: true, description: 'Retired. Any nonzero or nonempty worker-reported usage field is rejected; cloud inference usage is written only by synchronous gateway reservation settlement.' } } },
+    JobCompletion: {
+      type: 'object',
+      description: 'Worker-reported usage is retired and must be omitted. Cloud inference usage is written only by synchronous gateway reservation settlement.',
+      properties: {
+        state: { type: 'string', enum: ['succeeded', 'failed', 'canceled'] },
+        payload: stringMap,
+        usage: false,
+      },
+    },
     CompleteJobRequest: { type: 'object', required: ['workerId', 'jobId', 'leaseId', 'completion'], properties: { workerId: { type: 'string' }, jobId: { type: 'string' }, leaseId: { type: 'string' }, completion: ref('JobCompletion') } },
     RetryJobRequest: { type: 'object', properties: { runAfter: timestamp } },
     UsageEvent: {
@@ -1306,9 +1315,9 @@ function buildSchemas() {
         sessionId: { type: 'string' },
         jobId: { type: 'string' },
         model: { type: 'string' },
-        releaseId: { type: 'string' },
-        activationId: { type: 'string' },
-        loadedIdentityId: { type: 'string' },
+        releaseId: ref('ExactSHA256'),
+        activationId: ref('ExactSHA256'),
+        loadedIdentityId: ref('ExactSHA256'),
         routeId: { type: 'string' },
         routeInstanceId: { type: 'string' },
         usageRequestId: { type: 'string' },
@@ -1443,6 +1452,10 @@ function buildSchemas() {
         messages: { type: 'array', items: { type: 'object', additionalProperties: true } },
         stream: { type: 'boolean' }, max_tokens: ref('OutputTokenLimit'), max_completion_tokens: ref('OutputTokenLimit'),
         n: { const: 1 }, best_of: { const: 1 },
+        use_beam_search: false, beam_search: false, beam_search_options: false,
+        beam_size: false, num_beams: false, beam_width: false,
+        num_return_sequences: false, parallel_sampling: false, candidate_count: false,
+        length_penalty: false, early_stopping: false,
         max_output_tokens: false, n_predict: false,
       },
     },

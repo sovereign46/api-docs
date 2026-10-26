@@ -200,10 +200,13 @@ test('readiness 503 is a status response, not the API error envelope', () => {
 
 test('runtime schemas distinguish gateway authority from team compatibility metadata', () => {
   assert.deepEqual(Object.keys(schemas.ModelRuntime.properties).sort(), [
-    'engine', 'version', 'profileSha256', 'contextWindow', 'maxTokens', 'reasoning', 'minMemoryBytes', 'recommendedMemoryBytes',
+    'engine', 'version', 'profileSha256', 'closureSha256', 'closureSizeBytes', 'contextWindow', 'maxTokens', 'reasoning', 'minMemoryBytes', 'recommendedMemoryBytes',
   ].sort());
   assert.deepEqual(schemas.ModelRuntime.required, ['reasoning']);
   assert.equal(schemas.ModelRuntime.properties.reasoning.type, 'boolean');
+  assert.equal(schemas.ModelRuntime.properties.closureSha256.type, 'string');
+  assert.equal(schemas.ModelRuntime.properties.closureSizeBytes.type, 'integer');
+  assert.equal(schemas.ModelRuntime.properties.closureSizeBytes.format, 'int64');
   const metadata = schemas.Team.properties.modelMetadata;
   assert.deepEqual(metadata.type, ['object', 'null']);
   assert.equal(metadata.readOnly, undefined, 'shared settings schema must not promise all metadata is computed');
@@ -255,9 +258,33 @@ test('admin settings, retired policies, and exact grants remain distinct from se
 test('exact release identities and conditional grants are explicit', () => {
   assert.match(schemas.ModelReleaseIdentity.description, /sha256 release ID.*rel_/);
   assert.equal(schemas.ModelReleaseIdentity.properties.runtime.$ref, '#/components/schemas/ModelRuntime');
-  for (const field of ['manifestSha256', 'manifestSignatureSha256', 'artifactSha256', 'runtimeIdentitySha256']) {
-    assert.equal(schemas.ModelReleaseIdentity.properties[field].type, 'string', field);
+  assert.deepEqual(schemas.ModelReleaseIdentity.properties.format.enum.toSorted(), ['', 'gguf', 'safetensors']);
+
+  const exactSha256Pattern = '^sha256:[0-9a-f]{64}$';
+  assert.equal(schemas.ExactSHA256.type, 'string');
+  assert.equal(schemas.ExactSHA256.pattern, exactSha256Pattern);
+  const exactIdentityFields = {
+    ModelCatalogEntry: ['releaseId'],
+    ModelReleaseIdentity: [
+      'id', 'manifestSha256', 'manifestSignatureSha256', 'artifactSha256', 'artifactDigest',
+      'bundleDigest', 'releaseSignatureSubjectDigest', 'runtimeIdentitySha256',
+    ],
+    TeamModelReleaseGrant: ['releaseId', 'enabledUnderActivationId', 'authoritySnapshotSha256'],
+    TeamModelReleaseGrantRequest: ['releaseId'],
+    ServingAuthorityView: ['releaseId', 'deploymentId', 'activationId', 'loadedIdentityId'],
+    UsageEvent: ['releaseId', 'activationId', 'loadedIdentityId'],
+  };
+  for (const [schemaName, fields] of Object.entries(exactIdentityFields)) {
+    for (const field of fields) {
+      assert.equal(schemas[schemaName].properties[field].$ref, '#/components/schemas/ExactSHA256', `${schemaName}.${field}`);
+    }
   }
+  const exactSha256 = new RegExp(exactSha256Pattern);
+  assert.match(`sha256:${'0a'.repeat(32)}`, exactSha256);
+  for (const invalid of [`sha256:${'a'.repeat(63)}`, `sha256:${'A'.repeat(64)}`, 'sha256:test', 'rel_01']) {
+    assert.doesNotMatch(invalid, exactSha256);
+  }
+
   assert.match(schemas.ModelCatalogEntry.properties.releaseId.description, /sha256 identity/);
   assert.deepEqual(schemas.ModelCatalogResponse.required, ['models', 'modelReleaseIdentities']);
   assert.equal(schemas.ModelCatalogResponse.properties.modelReleaseGrants.items.$ref, '#/components/schemas/TeamModelReleaseGrant');
@@ -267,9 +294,13 @@ test('exact release identities and conditional grants are explicit', () => {
 
   const grantPath = api.paths['/v1/admin/model-release-grants'];
   assert.deepEqual(Object.keys(grantPath).sort(), ['get', 'patch', 'put']);
-  assert.equal(schemas.TeamModelReleaseGrantRequest.properties.releaseId.type, 'string');
+  assert.equal(grantPath.get.responses['200'].content['application/json'].schema.properties.modelReleaseGrants.items.$ref, '#/components/schemas/TeamModelReleaseGrant');
   assert.match(schemas.TeamModelReleaseGrantRequest.description, /Revocation remains available/);
+  for (const method of ['get', 'put', 'patch']) assert.deepEqual(grantPath[method].security, [{ bearerAuth: [] }]);
+  assert.match(docs['models.mdx'], /owner or admin/);
   for (const method of ['put', 'patch']) {
+    assert.equal(grantPath[method].requestBody.content['application/json'].schema.$ref, '#/components/schemas/TeamModelReleaseGrantRequest');
+    assert.equal(grantPath[method].responses['200'].content['application/json'].schema.$ref, '#/components/schemas/TeamModelReleaseGrant');
     const headers = Object.fromEntries(grantPath[method].parameters.filter((parameter) => parameter.in === 'header').map((parameter) => [parameter.name, parameter]));
     assert.equal(headers['Idempotency-Key'].required, true);
     assert.equal(headers['If-Match'].required, false);
@@ -301,7 +332,9 @@ test('production model discovery and verified model POST contracts include auth,
       assert.equal(operation.responses[status].content['application/json'].schema.$ref, '#/components/schemas/ErrorResponse');
     }
     assert.match(operation.responses['400'].description, /unsupported_feature/);
+    assert.match(operation.responses['429'].description, /rate_limited/);
     assert.match(operation.responses['429'].description, /monthly_cap_exceeded.*before upstream dispatch/);
+    assert.doesNotMatch(operation.responses['429'].description, /capacity_limited/);
     assert.match(operation.responses['502'].description, /upstream_error/);
     assert.match(operation.responses['503'].description, /model_registry_unavailable/);
     assert.match(operation.responses['503'].description, /serving_authority_unavailable/);
@@ -337,6 +370,9 @@ test('model assurance docs keep identity, release, activation, and inference sep
 });
 
 test('cloud request schemas describe supported limits and reject stateful/unsupported features', () => {
+  assert.equal(schemas.Team.properties.monthlyCapMicros.type, 'integer');
+  assert.equal(schemas.Team.properties.monthlyCapMicros.format, 'int64');
+  assert.equal(schemas.Team.properties.monthlyCapMicros.minimum, 0);
   assert.equal(schemas.OutputTokenLimit.minimum, 1);
   assert.equal(schemas.OutputTokenLimit.maximum, 2147483647);
   const limits = {
@@ -361,17 +397,17 @@ test('cloud request schemas describe supported limits and reject stateful/unsupp
   assert.equal(chat.properties.n_predict, false);
   assert.equal(chat.properties.n.const, 1);
   assert.equal(chat.properties.best_of.const, 1);
+  for (const field of [
+    'use_beam_search', 'beam_search', 'beam_search_options', 'beam_size', 'num_beams', 'beam_width',
+    'num_return_sequences', 'parallel_sampling', 'candidate_count', 'length_penalty', 'early_stopping',
+  ]) assert.equal(chat.properties[field], false, field);
   assert.match(chat.description, /one output trajectory/);
 });
 
 test('usage schemas bind settlement to exact serving authority and retire worker accounting', () => {
-  for (const field of ['releaseId', 'activationId', 'loadedIdentityId', 'routeId', 'routeInstanceId', 'usageRequestId']) {
-    assert.equal(schemas.UsageEvent.properties[field].type, 'string', field);
-  }
-  const workerUsage = schemas.JobCompletion.properties.usage;
-  assert.equal(workerUsage.$ref, '#/components/schemas/UsageEvent');
-  assert.equal(workerUsage.deprecated, true);
-  assert.match(workerUsage.description, /synchronous gateway reservation settlement/);
+  assert.equal(schemas.JobCompletion.properties.usage, false);
+  assert.match(schemas.JobCompletion.description, /usage is retired and must be omitted/);
+  assert.match(schemas.JobCompletion.description, /synchronous gateway reservation settlement/);
   assert.match(docs['gateway.mdx'], /settles durably before emitting its success terminal/);
   assert.match(docs['serving-authority.mdx'], /response\.incomplete.*after settlement/);
   assert.match(docs['worker-control.mdx'], /completion\.usage.*retired/);
@@ -396,12 +432,13 @@ test('quickstart executes discovery-driven calls and stops on unauthorized defau
           return Response.json({ endpoint: 'https://example.invalid/gateway/', defaultModel: 'example/authorized-model', models: ['legacy-only-model'] });
         }
         if (calls.length === 3) {
-          assert.equal(url, 'https://example.invalid/gateway/v1/models');
+          assert.equal(url, 'https://gateway.s46.dev/v1/models');
           assert.equal(init.method, 'GET');
           if (scenario === 'registry-unavailable') return Response.json({ error: { code: 'model_registry_unavailable' } }, { status: 503 });
-          return Response.json({ object: 'list', data: scenario === 'success' ? [{ id: 'example/authorized-model', metadata: { releaseId: 'sha256:test' } }] : [] });
+          const id = scenario === 'success' ? 'example/authorized-model' : 'example/another-authorized-model';
+          return Response.json({ object: 'list', data: [{ id, metadata: { releaseId: `sha256:${'0a'.repeat(32)}` } }] });
         }
-        assert.equal(url, 'https://example.invalid/gateway/v1/chat/completions');
+        assert.equal(url, 'https://gateway.s46.dev/v1/chat/completions');
         assert.equal(init.method, 'POST');
         assert.equal(JSON.parse(init.body).model, 'example/authorized-model');
         return Response.json({ choices: [{ message: { content: 'ok' } }] });

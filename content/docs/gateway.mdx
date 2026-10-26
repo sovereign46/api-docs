@@ -60,7 +60,13 @@ A stream settles durably before emitting its success terminal:
 - Responses/Codex end with `response.completed` (`response.incomplete` when output is limited).
 - Anthropic ends with `message_stop`.
 
-An upstream failure before streaming returns `502 upstream_error`. After headers are sent, inspect stream errors rather than HTTP status. Missing/ambiguous usage, parser or transport failure, and client disconnect settle conservatively. Never treat a truncated stream or missing success terminal as a completed generation.
+An upstream failure before streaming returns `502 upstream_error`. After headers are sent, inspect the protocol-specific failure form rather than HTTP status:
+
+- Chat emits an SSE `data` object: `{ "error": { "code": "upstream_error", "message": "model stream failed" } }`.
+- Responses/Codex emits an `event: response.failed` event whose response has `status: "failed"` and an `upstream_error` error.
+- Anthropic emits an `event: error` event with `{ "type": "error", "error": { "type": "api_error", "message": "model stream failed" } }`.
+
+No success terminal follows one of these failures. Missing/ambiguous usage, parser or transport failure, and client disconnect settle conservatively. Never treat an error event, truncated stream, or missing success terminal as a completed generation.
 
 ## Model discovery
 
@@ -77,7 +83,7 @@ OpenAI/Codex return `{ object: "list", data: [...] }`, with each entry's catalog
 | Status | Code | Meaning |
 | --- | --- | --- |
 | `401` | `unauthorized` | Production discovery or inference lacks valid caller credentials. |
-| `403` | `model_not_allowed` | The model is not active and exactly granted to this team. |
+| `403` | `model_not_allowed` | Select a model from authenticated discovery, or have an owner/admin grant its exact active release; retired model-ID policy cannot authorize it. |
 | `429` | `monthly_cap_exceeded` | The atomic monthly ledger cannot reserve the signed worst-case cost. |
 | `503` | `model_registry_unavailable` | Independent registry verification is unavailable or no longer current. |
 | `503` | `serving_authority_unavailable` | Deployment, activation, route, or challenged loaded identity is absent, stale, changed, or invalid. |

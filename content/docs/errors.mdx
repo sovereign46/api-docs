@@ -39,7 +39,7 @@ Grouped by status class. Every `code` below is stable and safe to switch on.
 | `409` | `conflict` | Resource conflict or duplicate state. |
 | `409` | `idempotency_conflict` | `Idempotency-Key` reused with different parameters. |
 | `410` | `expired` | Login, magic link, or token expired. |
-| `412` | `precondition_failed` | `If-Match` revision / ETag is stale. |
+| `412` | `precondition_failed` | A conditional requirement failed: for example, `If-Match` is stale, or an exact-release allow grant targets a release that is inactive or whose serving authority is unavailable. |
 | `428` | `authorization_pending` | Polling target is not ready yet — see contexts below. |
 | `428` | `precondition_required` | A required header such as `Idempotency-Key` is missing. |
 | `429` | `rate_limited` | Request or stream rate limit exceeded. |
@@ -71,7 +71,10 @@ This one code is shared by several polling-style endpoints — the caller should
 | --- | --- |
 | `authorization_pending` | Retry after the endpoint-specific polling interval, or use exponential backoff. |
 | `401 unauthorized` | Refresh credentials only if you hold a valid refresh token/cookie; otherwise restart login. |
-| `403 forbidden` / `model_not_allowed` | Do not retry blindly — change credentials, membership, or model policy first. |
+| `403 forbidden` | Do not retry blindly; use credentials with the required role and scope, or choose an allowed action. |
+| `403 model_not_allowed` | Select a model returned by authenticated gateway discovery, or ask an owner/admin to create an allow grant for that exact release. Retired model-ID policy cannot authorize it. |
+| `412 precondition_failed` after a stale ETag | Re-read the resource, reapply the change, and retry with the current ETag. |
+| `412 precondition_failed` while creating an exact-release allow grant | Do not treat it as an ETag retry. An operator must restore or provision serving authority for that exact active release before the grant can be created. |
 | `503 model_registry_unavailable` | Wait for registry verification to recover; refreshing credentials or changing a grant does not repair trust. |
 | `503 serving_authority_unavailable` | Wait for signed deployment/activation/loaded-route authority to recover; a broader grant cannot repair it. |
 | `429 monthly_cap_exceeded` | Do not retry unchanged until capacity is available or an authorized administrator changes the cap. |

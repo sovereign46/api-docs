@@ -8,7 +8,7 @@ export type RouteEntry = {
 export const routeIndex = {
   operations: [
     { method: 'GET', path: '/healthz', href: '#liveness', description: 'Process liveness.' },
-    { method: 'GET', path: '/readyz', href: '#readiness', description: 'Database and independent registry readiness.' },
+    { method: 'GET', path: '/readyz', href: '#readiness', description: 'Database and model-serving readiness.' },
     { method: 'GET', path: '/debug/vars', href: '#diagnostics--support', description: 'Operator-authorized diagnostics.' },
     { method: 'GET', path: '/assets/auth.css', href: '#diagnostics--support', description: 'Auth page stylesheet.' }
   ],

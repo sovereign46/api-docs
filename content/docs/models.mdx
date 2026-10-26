@@ -32,14 +32,14 @@ The current model-by-model evidence is listed on [Model assurance status](/docs/
 
 The response always contains registry catalog `models` and up to 1,000 newest `modelReleaseIdentities`. Pass `model={publicModelId}` to filter identities. When `team` is supplied, the response also contains retired `modelPolicies` and exact `modelReleaseGrants` for that team. Manifest and signature bodies are retained internally but never returned by this listing.
 
-Each catalog row points at an immutable registry `releaseId`: `sha256:<SHA-256 of the exact authenticated manifest bytes>`. Replacement manifest bytes produce a different release ID and never inherit an earlier grant.
+After a successful exact-identity sync, a catalog row points at an immutable registry `releaseId`: `sha256:<SHA-256 of the exact authenticated manifest bytes>`. Before that sync succeeds, a catalog row can omit `releaseId`; such a row is not grantable. Use the matching `modelReleaseIdentities` entry as the source of an exact release ID. Replacement manifest bytes produce a different release ID and never inherit an earlier grant.
 
 | Field | Meaning |
 | --- | --- |
 | `id` / `backendModel` | Public model ID / verified serving alias. Clients send the public ID. |
 | `releaseId` | Immutable exact-manifest identity used by deployment, activation, and grants. |
-| `format` | `safetensors` for a native package, `gguf` for a GGUF artifact; older manifests may omit it. |
-| `runtime` | Signed engine/version, profile digest, context/output limits, reasoning capability, and memory hints. |
+| `format` | `safetensors` for a native package, `gguf` for a GGUF artifact; historical identities may use an empty value, and catalog rows may omit it. |
+| `runtime` | Signed engine/version, profile digest, context/output limits, reasoning capability, and memory hints. Native releases can also include optional `closureSha256` and `closureSizeBytes` for the runtime closure that contributes to `runtimeIdentitySha256`. |
 | `certified` | The release/audit gate passed; this does not attest currently loaded runtime bytes. |
 | `published` | The release is represented in the verified registry; this does not imply activation or availability. |
 | `sigsumStatus` | Transparency state observed during registry verification, not a permanent live-health badge. |
@@ -60,7 +60,7 @@ Migration 0020 retires model-ID-wide policies without backfilling authority. Exi
 <Method method="PUT" path="/v1/admin/model-release-grants" returns="200" />
 <Method method="PATCH" path="/v1/admin/model-release-grants" returns="200" />
 
-A grant authorizes one team and one immutable `sha256:...` registry release. Creating an allow grant succeeds only while the independently verified serving-authority snapshot contains that exact active release. Revocation remains available during registry or serving-authority outages.
+A grant authorizes one team and one immutable `sha256:...` registry release. Creating an allow grant succeeds only while the independently verified serving-authority snapshot contains that exact active release. A `412 precondition_failed` during allow-grant creation can therefore mean that the release is inactive or current serving authority is unavailable, not merely that an ETag is stale. Do not use the ETag reread/retry flow for that case: an operator must restore or provision authority for the exact release first. Revocation remains available during registry or serving-authority outages.
 
 All grant writes require `Idempotency-Key`. Concurrency is conditional:
 

@@ -30,12 +30,12 @@ Identifiers contain `@` and `/`, so path parameters must be URL path-escaped and
 
 ## Rate limits
 
-Limits are enforced per credential and per IP on streaming routes. Two distinct conditions exist — back off on both:
+Request rate limiting and monthly inference accounting are distinct. Back off for rate limits; a monthly-cap failure requires capacity or policy to change:
 
 | Status | Code | Meaning & response |
 | --- | --- | --- |
 | `429` | `rate_limited` | Request or stream rate exceeded. Retry after `Retry-After`; otherwise use exponential backoff with jitter. |
-| `429` | `capacity_limited` | Model/worker capacity exists but is momentarily saturated. Safe to retry shortly — this is transient. |
+| `429` | `monthly_cap_exceeded` | Worst-case production inference cost cannot be reserved under the team's UTC monthly cap. No upstream request was made; do not treat this as a transient rate limit. |
 | `503` | `rate_limiter_unavailable` | Rate-limiter backend is down. Retry with backoff; do not hammer. |
 
 <Note tag="Backoff">
@@ -67,7 +67,7 @@ If-Match: "rev-42"
 Content-Type: application/json
 ```
 
-A stale revision is rejected with `412 precondition_failed`. Re-read the resource, reapply your change, and retry.
+A stale revision is rejected with `412 precondition_failed`. Re-read the resource, reapply your change, and retry. Exact-release grants are conditional: omit `If-Match` to create an absent grant, but include the current ETag to update or revoke an existing one. Legacy model-ID policies are revoke-only and always require their existing ETag.
 
 ## Pagination
 

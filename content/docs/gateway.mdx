@@ -1,11 +1,11 @@
 ---
 title: Harness gateway
-description: Model discovery, protocol support, output limits, and streaming.
+description: Authorized model discovery, protocol support, accounting, output limits, and streaming.
 ---
 
-Use the `endpoint`, `defaultModel`, and authorized `models` returned by [team resolution](/docs/teams-sessions). Cloud requests use a public ID returned there, such as the fictional `s46/example-published-model`; the gateway maps it to the signed backend alias. Do not send backend aliases as public model IDs or hard-code an identity-only candidate. See [model assurance status](/docs/model-status) for the current Devstral and DeepSeek state.
+Use the `endpoint` and configured `defaultModel` from [team resolution](/docs/teams-sessions), then fetch this gateway's authenticated model discovery. The team response's `models` and `modelMetadata` are compatibility fields, not exact serving authorization. Cloud requests use a public ID returned by gateway discovery; the gateway maps it to the signed backend alias. Do not send backend aliases or hard-code an identity-only candidate.
 
-Model POST routes require a bearer token in production **and whenever registry verification is enabled**, including development. The gateway enforces independent current registry verification and the caller's team policy. Explicitly sync-disabled development and default airplane mode retain local/mock behavior.
+Production model POST and discovery routes require a bearer token. They enforce current registry verification, exact signed [serving authority](/docs/serving-authority), and the caller team's exact-release grant. Explicitly sync-disabled development and airplane mode retain separate local/mock behavior; those exceptions are not the production contract.
 
 <RouteIndex page="gateway" />
 
@@ -13,7 +13,7 @@ Model POST routes require a bearer token in production **and whenever registry v
 
 <Method method="POST" path="/v1/chat/completions" returns="200 / SSE" />
 
-Omit `model` to use the team default. For a complete discovery-driven call, see the [quickstart](/docs/quickstart#call-the-gateway). OpenAI SDK clients can use the returned gateway endpoint plus `/v1` as their base URL and select an ID from the team's authorized list.
+Omit `model` to use the configured team default. It must still resolve to an active exact-granted release. For a complete discovery-driven call, see the [quickstart](/docs/quickstart#call-the-gateway).
 
 ## Responses & Codex
 
@@ -30,6 +30,10 @@ Supports text, system prompts, function tools, `tool_choice`, `tool_use`, and te
 
 These are compatibility subsets, not complete vendor APIs. Unsupported Responses or Anthropic features return `400 unsupported_feature`.
 
+## One output trajectory
+
+Protected requests permit exactly one output trajectory. `n` and `best_of` must be absent or the integer `1`; beam-search and multi-sample extensions are rejected before usage reservation. Successful non-stream responses and streams must likewise contain one coherent index-0 trajectory and one recognized terminal finish.
+
 ## Output limits
 
 The verified cloud cap is the smaller positive catalog value of `maxOutputTokens` and `contextWindow`, or the sole positive value. Omitted output limits default to that cap; excessive values are **rejected**, not clamped. Without either limit, the gateway supplies no catalog-derived default.
@@ -40,17 +44,23 @@ The verified cloud cap is the smaller positive catalog value of `maxOutputTokens
 | Responses / Codex | `max_output_tokens`, `max_tokens`, `max_completion_tokens` |
 | Anthropic Messages | `max_tokens` |
 
-Limits must be positive integers no greater than 2,147,483,647 and the effective catalog limit. Multiple supplied limits must agree. Invalid, conflicting, protocol-inappropriate limits and cloud `n_predict` return `400 invalid_request`. Runtime `reasoning` metadata does not imply that the compatibility adapters accept reasoning controls.
+Limits must be positive integers no greater than 2,147,483,647 and the effective catalog limit. Multiple supplied aliases must agree. Invalid, conflicting, protocol-inappropriate limits and cloud `n_predict` return `400 invalid_request`.
 
-## Streaming
+## Reservation & settlement
 
-Set `stream: true` for `text/event-stream`:
+Before opening the protected upstream connection, the gateway rechecks the exact authority snapshot, challenged loaded identity, route incarnation, and grant, then atomically reserves the signed worst-case request cost. `429 monthly_cap_exceeded` means no upstream request was made.
 
-- Chat emits completion chunks and `[DONE]` on success.
-- Responses/Codex emit Responses-style events, ending with `response.completed` or `response.incomplete` when output is limited.
-- Anthropic emits Messages-style events through `message_stop` on success.
+A successful non-stream response settles validated exact usage before completion.
 
-An upstream failure before streaming returns `502 upstream_error`. After headers are sent, inspect stream errors rather than HTTP status: chat emits an error object, Responses emits `response.failed`, and Anthropic emits an `error` event. Do not treat a truncated stream as successful completion.
+### Streaming
+
+A stream settles durably before emitting its success terminal:
+
+- Chat ends with `[DONE]`.
+- Responses/Codex end with `response.completed` (`response.incomplete` when output is limited).
+- Anthropic ends with `message_stop`.
+
+An upstream failure before streaming returns `502 upstream_error`. After headers are sent, inspect stream errors rather than HTTP status. Missing/ambiguous usage, parser or transport failure, and client disconnect settle conservatively. Never treat a truncated stream or missing success terminal as a completed generation.
 
 ## Model discovery
 
@@ -58,30 +68,31 @@ An upstream failure before streaming returns `502 upstream_error`. After headers
 <Method method="GET" path="/anthropic/v1/models" />
 <Method method="GET" path="/codex/v1/models" />
 
-Discovery does not require authentication. When verification is enabled, lists contain independently verified servable catalog entries; they are **not** the caller's team allow-list. Use team resolution for authorized selection.
+Production discovery requires the caller's bearer token and returns only that team's exact-granted releases that are active under current serving authority. It is safe to select from this list; a global catalog row or stored default alone is not serving authorization.
 
-OpenAI/Codex return `{ object: "list", data: [...] }`, with each entry's catalog details under `metadata`, including `format`, `runtime`, `contextWindow`, and `maxOutputTokens`. Anthropic returns `{ data: [{ id, type: "model", display_name }], has_more: false }` without runtime metadata. See [Models](/docs/models#certified-models) and the [OpenAPI schemas](/openapi.json).
+OpenAI/Codex return `{ object: "list", data: [...] }`, with each entry's catalog details under `metadata`, including the immutable `releaseId`, `format`, `runtime`, `contextWindow`, and `maxOutputTokens`. Anthropic returns `{ data: [{ id, type: "model", display_name }], has_more: false }` without runtime metadata.
 
 ## Policy & availability failures
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| `403` | `model_not_allowed` | Model is not currently authorized and available for this team. |
+| `401` | `unauthorized` | Production discovery or inference lacks valid caller credentials. |
+| `403` | `model_not_allowed` | The model is not active and exactly granted to this team. |
+| `429` | `monthly_cap_exceeded` | The atomic monthly ledger cannot reserve the signed worst-case cost. |
 | `503` | `model_registry_unavailable` | Independent registry verification is unavailable or no longer current. |
-| `503` | `model_unavailable` | No configured serving upstream is available. |
-| `502` | `upstream_error` | Upstream request or response failed. |
-
-See [Errors](/docs/errors) for authentication, validation, and rate-limit failures. `/healthz` and `/readyz` are described in [Operations](/docs/operations).
+| `503` | `serving_authority_unavailable` | Deployment, activation, route, or challenged loaded identity is absent, stale, changed, or invalid. |
+| `503` | `model_unavailable` | No protected serving route is available. |
+| `502` | `upstream_error` | Protected upstream request or response failed. |
 
 ## Airplane-mode workers
 
 <Method method="GET" path="/v1/workers" />
 <Method method="GET" path="/v1/workers/{id}" />
 
-Local worker discovery uses ID `local-llamacpp` and states `not_configured`, `unavailable`, `unhealthy`, `model_missing`, or `ready`. Local GGUF models such as `s46/devstral-small-2-24b` use llama.cpp; native safetensors cloud packages are a separate serving path. Local model IDs map to configured backend aliases, and local output limits are clamped to local configuration.
+Local worker discovery uses ID `local-llamacpp` and states `not_configured`, `unavailable`, `unhealthy`, `model_missing`, or `ready`. Local GGUF models use llama.cpp; native safetensors cloud packages are a separate serving path. Local model IDs map to configured backend aliases, and local output limits are clamped to local configuration.
 
 ## Upstream behavior
 
-Verified cloud Chat, Responses, Codex, and Anthropic calls normalize through one Chat Completions upstream. Dedicated Anthropic/Codex passthroughs and arbitrary-model proxy/mock behavior are only used when verification is disabled. Caller authorization headers and cookies are not forwarded upstream.
+Production protocols normalize to OpenAI Chat Completions and dispatch through the authority-bound protected mTLS Unix-socket route. Production has no caller-selected network origin, plaintext, or bearer fallback. Caller authorization headers and cookies are not forwarded upstream.
 
-For upstream settings and policy setup, see the [environment reference](https://github.com/sovereign46/api/blob/main/docs/development.md#environment-reference) and [policy runbook](https://github.com/sovereign46/api/blob/main/docs/deployment-trust-policy.md).
+Dedicated Anthropic/Codex passthroughs and arbitrary-model proxy/mock behavior apply only when verification is explicitly disabled. For operator provisioning, see the API repository's serving-authority and deployment documentation; those files describe source configuration, not proof that production is live.

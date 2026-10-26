@@ -38,7 +38,7 @@ curl -X POST https://api.s46.dev/v1/auth/device/poll \
 
 ## Call the gateway
 
-Use the access token to resolve identity and then the team's authorized models. This example checks HTTP failures before using JSON and refuses an unavailable configured default rather than silently choosing another model:
+Use the access token to resolve identity and team gateway settings, then call authenticated gateway discovery for the authoritative production model list. This example checks HTTP failures before using JSON and refuses an unavailable configured default rather than silently choosing another model:
 
 ```js
 const accessToken = process.env.S46_ACCESS_TOKEN;
@@ -61,11 +61,14 @@ const me = await request("https://api.s46.dev/v1/me");
 const team = await request(
   `https://api.s46.dev/v1/teams/${encodeURIComponent(me.team)}`,
 );
-if (!team.models.includes(team.defaultModel)) {
+const gateway = team.endpoint.replace(/\/$/, "");
+const discovery = await request(`${gateway}/v1/models`);
+const modelIds = discovery.data.map((model) => model.id);
+if (!modelIds.includes(team.defaultModel)) {
   throw new Error("Choose an authorized model or ask an admin to update the default");
 }
 const completion = await request(
-  `${team.endpoint.replace(/\/$/, "")}/v1/chat/completions`,
+  `${gateway}/v1/chat/completions`,
   {
     model: team.defaultModel,
     messages: [{ role: "user", content: "Write a short status update." }],
@@ -74,4 +77,4 @@ const completion = await request(
 console.log(completion.choices[0].message.content);
 ```
 
-Raw HTTP may omit `model` to request the configured team default; it still must be allowed and servable. For streaming, protocol subsets, output limits, and availability failures, see [Gateway](/docs/gateway). Runtime hints are returned in [team metadata](/docs/teams-sessions); do not hard-code model limits.
+Do not authorize from the team response's `models` or `modelMetadata`: those are compatibility fields, not exact serving-authority discovery. OpenAI/Codex gateway discovery returns active runtime hints under each model's `metadata`. Raw HTTP may omit `model` to request the configured team default; in production it still must resolve to an active, exact-granted release under current [serving authority](/docs/serving-authority). The gateway reserves worst-case monthly cost before dispatch and settles usage before completing the response or stream terminal. For protocol subsets, output limits, `monthly_cap_exceeded`, and availability failures, see [Gateway](/docs/gateway).

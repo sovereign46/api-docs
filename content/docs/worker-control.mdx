@@ -3,7 +3,7 @@ title: Worker control
 description: Operator-only worker provisioning, then credentialed heartbeat and job leasing.
 ---
 
-Operators provision workers; workers use the returned credentials to heartbeat, lease jobs, acknowledge leases, and report completion. The API represents model certification/publication as `kind: "model"` jobs with capability checks (`model_certification`, `model_registry_publish`); provisioning does not implement or attest those workloads.
+Operators provision workers; workers use the returned credentials to heartbeat, lease jobs, acknowledge leases, and report completion. The API represents model certification/publication as `kind: "model"` jobs with capability checks (`model_certification`, `model_registry_publish`); provisioning does not implement or attest those workloads. Inference-capable execution/model jobs remain closed because this worker protocol does not reserve usage against an exact challenged loaded incarnation before dispatch.
 
 The API checks worker credentials, lease eligibility/capacity, job compatibility, and assigned job/lease identifiers. Stored [harness policy](/docs/admin#harness-policies) is separate: these routes do not establish a signed per-job sandbox policy or CLI drift enforcement.
 
@@ -53,7 +53,7 @@ Periodically report liveness and state so the scheduler can route work and mark 
 
 Ask for the next compatible job. Leasing uses current stored worker fields and rechecks the credential under the lease lock, so a previously authorized request cannot retain old scope/capabilities after rotation or revocation. When no eligible job is available, the API returns `428 authorization_pending`.
 
-Model lifecycle jobs require `model_certification` for `model.certify`, or `model_registry_publish` for `model.publish`/`model.yank`; advertising the model ID alone is insufficient. These are scheduling checks, not evidence of workload execution.
+Release-lifecycle jobs require `model_certification` for `model.certify`, or `model_registry_publish` for `model.publish`/`model.yank`; advertising the model ID alone is insufficient. Those actions do not perform inference and remain separate from serving reservation. Inference-capable execution/model jobs are rejected at enqueue and retry; lease-time checks reject legacy rows queued before this boundary. Catalog permission or post-hoc worker usage is not a pre-dispatch reservation.
 
 ### Acknowledge
 
@@ -61,7 +61,7 @@ Acknowledge the assigned job and lease before starting. The API validates the wo
 
 ### Complete
 
-Report success or failure. Model lifecycle completion payloads carry certification evidence or publication/yank results for API validation; registration alone does not prove a worker performed those workloads.
+Report success or failure. Model lifecycle completion payloads carry certification evidence or publication/yank results for API validation; registration alone does not prove a worker performed those workloads. The `completion.usage` object is retired: any nonzero or nonempty usage field is rejected before completion mutates. Production inference usage is created only by synchronous gateway reservation settlement.
 
 ## Lease a job
 
@@ -104,7 +104,7 @@ job = res.json() if res.status_code == 200 else None  # 428 = no work
 
 <Method method="POST" path="/v1/worker/jobs/complete" returns="200" />
 
-Report the outcome with `workerId`, `jobId`, `leaseId`, and `completion` in the JSON body.
+Report the outcome with `workerId`, `jobId`, `leaseId`, and `completion` in the JSON body. Omit `completion.usage`; workers cannot write inference usage events.
 
 <EndpointMeta>Auth · **worker credential** · Schema · **illustrative**</EndpointMeta>
 

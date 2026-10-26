@@ -1,6 +1,6 @@
 ---
 title: Teams & sessions
-description: Resolve authorized models and gateway configuration; list team sessions.
+description: Resolve team and gateway settings; understand legacy model compatibility fields; list sessions.
 ---
 
 <RouteIndex page="teamsSessions" />
@@ -10,14 +10,17 @@ description: Resolve authorized models and gateway configuration; list team sess
 <Method method="GET" path="/v1/teams/{team}" returns="200 / 503" />
 <EndpointMeta>Auth · **bearer / cookie**</EndpointMeta>
 
-Path-escape the canonical team ID: `@s46/engineering` becomes `%40s46%2Fengineering`. Use the returned `endpoint`, `region`, and authorized `models` rather than hard-coding them. `defaultModel` is a configured preference: check that it appears in `models` before selecting it.
+Path-escape the canonical team ID: `@s46/engineering` becomes `%40s46%2Fengineering`. Use this route for the team's gateway `endpoint`, `region`, `mode`, and configured `defaultModel`. In production, fetch the authoritative active model list separately from authenticated gateway `GET /v1/models` and verify that the default appears there.
 
 ```bash
 curl 'https://api.s46.dev/v1/teams/%40s46%2Fengineering' \
   -H "Authorization: Bearer $S46_ACCESS_TOKEN"
+
+curl https://gateway.s46.dev/v1/models \
+  -H "Authorization: Bearer $S46_ACCESS_TOKEN"
 ```
 
-Illustrative cloud response (limits come from the verified registry, not client constants):
+Illustrative compatibility response:
 
 ```json
 {
@@ -29,20 +32,16 @@ Illustrative cloud response (limits come from the verified registry, not client 
   "mode": "cloud",
   "workerHosts": [],
   "defaultModel": "s46/example-published-model",
-  "models": ["s46/example-published-model"],
-  "modelMetadata": {
-    "s46/example-published-model": {
-      "contextWindow": 32768,
-      "maxTokens": 4096,
-      "reasoning": false
-    }
-  }
+  "models": [],
+  "modelMetadata": {}
 }
 ```
 
-The response above is fictional contract data, not a claim that any named model is live. On this public cloud resolution route, `models` contains only servable, team-allowed IDs; `modelMetadata` maps those same IDs to signed runtime metadata. [Admin team settings](/docs/admin#team-settings) are configured values, not this authorized discovery view. Runtime fields include engine/version, profile digest, context/output limits, reasoning capability, and memory hints; optional fields may be absent. This authenticates metadata, not loaded checkpoint bytes. Airplane teams use local settings and may return `modelMetadata: null`.
+The response above is fictional contract data, not a claim that any named model is live. Treat `models` and `modelMetadata` here as compatibility fields. They may be empty and do not establish an exact-release grant, current serving authority, or production availability.
 
-When independent verification is required but unavailable, cloud resolution returns `503 model_registry_unavailable`. An empty authorized list is not permission to use an arbitrary model. Optional development overrides are `endpoint`, `region`, `mode`, and `defaultModel`.
+Authenticated gateway model discovery is the authoritative production path. It returns only the caller team's exact-granted releases active under current [serving authority](/docs/serving-authority), with active runtime metadata under each OpenAI/Codex entry's `metadata`.
+
+This team route can return `503 model_registry_unavailable` while resolving its cloud compatibility view. A successful team response is not evidence that serving authority is current; use gateway discovery and inference responses for the production authority result. Optional development overrides are `endpoint`, `region`, `mode`, and `defaultModel`; they do not select production serving transport. Airplane teams use local settings and may return `models` or `modelMetadata` as `null`.
 
 ## List sessions
 

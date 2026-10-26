@@ -1,0 +1,46 @@
+---
+title: Serving authority
+description: Exact release, deployment, activation, loaded identity, route, grant, and accounting gates.
+---
+
+Production serving is a conjunction of independent checks. Passing one does not imply any later check:
+
+1. the registry authenticates an immutable `sha256:...` release identity;
+2. signed deployment evidence binds that release and runtime identity;
+3. signed activation binds the deployment, backend alias, protected route, runtime limits, and billing rates;
+4. a fresh challenged loaded-identity record binds the active route incarnation and serving instance;
+5. the caller's team has an allow grant for that exact release;
+6. the UTC monthly ledger can reserve the signed worst-case request cost before dispatch.
+
+This is the implemented **source contract**, not evidence that production has provisioned keys, evidence, routes, grants, or capacity. Consult the dated [model assurance status](/docs/model-status) and live readiness/discovery results separately.
+
+## Discovery and authorization
+
+Authenticated gateway `GET /v1/models` (or its protocol equivalent) is the authoritative production discovery path. It returns only releases that are active under the current serving-authority snapshot and exactly granted to the caller's team. The `models` and `modelMetadata` fields on `GET /v1/teams/{team}` are compatibility data, not exact serving-authority discovery. A configured public model ID, team compatibility field, or catalog row is not enough.
+
+A request rechecks the same current authority, loaded identity, route incarnation, and exact grant. The public model ID is mapped to the signed backend alias; caller-controlled origins and backend aliases cannot select a different production transport.
+
+## Readiness
+
+`GET /readyz` requires current registry verification and serving authority. Serving readiness also requires a matching persisted snapshot, fresh challenged loaded identity, protected route, at least one trusted exact grant, and enough remaining monthly capacity for its worst-case reservation.
+
+A registry failure reports both `modelRegistry: "unavailable"` and `servingAuthority: "unavailable"`. An authority-only failure reports `modelRegistry: "ok"` and `servingAuthority: "unavailable"`. Readiness remains a status body, not the ordinary error envelope.
+
+## Synchronous accounting
+
+Before opening the protected upstream connection, the gateway atomically reserves the signed worst-case cost under the team's monthly cap. If reservation fails, it returns `429 monthly_cap_exceeded` and sends no upstream request.
+
+Non-stream responses settle validated input/output usage before the HTTP response completes. Streams validate one output trajectory and durably settle usage before emitting the protocol terminal:
+
+- Chat success: `[DONE]`
+- Responses/Codex success: `response.completed`
+- Responses/Codex output limit: `response.incomplete`, emitted after settlement as the terminal for that limited response
+- Anthropic success: `message_stop`
+
+Missing or ambiguous usage, transport/parser failure, or disconnect is settled conservatively. A truncated stream or a stream without its expected terminal is not a completed generation.
+
+Usage events retain the exact release, activation, loaded identity, route, route incarnation, and usage-request identity for audit. Workers cannot create these inference usage events through completion payloads.
+
+## Operator inspection
+
+`GET /v1/admin/serving-authority` is read-only and accepts only the configured operator credential. It exposes non-secret current IDs and expiry times, not signing keys, evidence bodies, route configuration, or private transport material. There is no unsigned activation API.

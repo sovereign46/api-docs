@@ -3,9 +3,10 @@ export const dynamic = 'force-static';
 type SecurityRequirement = Array<Record<string, string[]>>;
 
 const bearerSecurity: SecurityRequirement = [{ bearerAuth: [] }];
+const operatorSecurity: SecurityRequirement = [{ operatorBearerAuth: [] }, { operatorAdminHeader: [] }];
 const gatewayServers = [{ url: 'https://gateway.s46.dev', description: 'Production harness gateway' }];
 const workerAdminAccess = {
-  security: [...bearerSecurity, { operatorBearerAuth: [] }, { operatorAdminHeader: [] }],
+  security: [...bearerSecurity, ...operatorSecurity],
   description: 'Requires admin admission, then authorization against the stored worker team, else organization. Global workers (both scopes empty) require operator credentials. Request scope hints do not replace the persisted resource scope.',
 };
 
@@ -100,10 +101,10 @@ const errorResponses = {
   '410': response('Expired', ref('ErrorResponse')),
   '412': response('Precondition failed', ref('ErrorResponse')),
   '428': response('Authorization pending or precondition required', ref('ErrorResponse')),
-  '429': response('Rate limited', ref('ErrorResponse')),
+  '429': response('rate_limited', ref('ErrorResponse')),
   '500': response('Internal error', ref('ErrorResponse')),
   '502': response('upstream_error: model upstream request or response failed', ref('ErrorResponse')),
-  '503': response('Service unavailable; model_registry_unavailable means independent registry verification is unavailable, while model_unavailable means no serving upstream is configured', ref('ErrorResponse')),
+  '503': response('Service unavailable; model_registry_unavailable means independent registry verification is unavailable, serving_authority_unavailable means exact serving authority is unavailable, and model_unavailable means no protected serving route is available', ref('ErrorResponse')),
 };
 
 type OperationOptions = {
@@ -149,6 +150,17 @@ function authenticatedGet(tags: string[], summary: string, operationId: string, 
   });
 }
 
+function teamGet(output: unknown, parameters: unknown[]) {
+  return operation(['Teams and sessions'], 'Resolve team settings and compatibility metadata', 'team', {
+    parameters,
+    responses: {
+      '200': response('Team settings and compatibility metadata', output),
+      ...errorResponses,
+      '503': response('model_registry_unavailable: independent registry verification is unavailable', ref('ErrorResponse')),
+    },
+  });
+}
+
 function authenticatedWrite(tags: string[], summary: string, operationId: string, input: unknown, output: unknown, success = '200', parameters: unknown[] = []) {
   return operation(tags, summary, operationId, {
     parameters,
@@ -184,6 +196,17 @@ function gatewayGet(summary: string, operationId: string, output: unknown) {
   return publicGet(['Harness gateway'], summary, operationId, output, [], gatewayServers);
 }
 
+function gatewayModelGet(summary: string, operationId: string, output: unknown) {
+  return operation(['Harness gateway'], summary, operationId, {
+    security: bearerSecurity,
+    servers: gatewayServers,
+    responses: {
+      '200': response(summary, output),
+      ...errorResponses,
+    },
+  });
+}
+
 function gatewayPost(summary: string, operationId: string, input: unknown, output: unknown) {
   return {
     ...operation(['Harness gateway'], summary, operationId, {
@@ -199,9 +222,10 @@ function gatewayPost(summary: string, operationId: string, input: unknown, outpu
           },
         },
         ...errorResponses,
+        '429': response('rate_limited or monthly_cap_exceeded; cap failure occurs before upstream dispatch', ref('ErrorResponse')),
       },
     }),
-    description: 'Bearer authentication and independent registry verification are required in production and verification-enabled development. The authorized public model ID is mapped to a shared Chat Completions backend. See /docs/gateway for protocol subsets and stream events.',
+    description: 'Production requires bearer authentication, current independent registry verification, exact signed serving authority, a matching exact-release team grant, and synchronous usage reservation before dispatch over the protected route. Explicitly sync-disabled development and airplane mode use separate local behavior. See /docs/gateway for protocol subsets and stream events.',
   };
 }
 
@@ -210,7 +234,7 @@ const openapi = {
   info: {
     title: 'Sovereign46 API',
     version: 'unreleased',
-    description: 'Current source contract for Sovereign46 API consumers. Runtime metadata, normalized cloud protocols, independent-policy gates, session-control removal, and operator-only worker provisioning are pending release; this document does not establish deployed availability. See /docs#release-status.',
+    description: 'Current source contract for Sovereign46 API consumers, including exact-release grants, signed serving authority, and synchronous gateway accounting. This document does not supply production evidence or establish deployed availability. See /docs#release-status.',
   },
   servers: [
     { url: 'https://api.s46.dev', description: 'Production control plane' },
@@ -236,9 +260,9 @@ const openapi = {
       get: operation(['Operations'], 'Readiness check', 'readyz', {
         security: null,
         responses: {
-          '200': response('Configured database and any enabled independent registry checks passed', ref('ReadyResponse')),
+          '200': response('Configured database, registry, serving-authority, exact-grant, and worst-case-capacity checks passed', ref('ReadyResponse')),
           '405': errorResponses['405'],
-          '503': response('Database or independent registry verification unavailable; this status body is not an ErrorResponse', ref('ReadyResponse')),
+          '503': response('Database, independent registry verification, or serving authority unavailable; this status body is not an ErrorResponse', ref('ReadyResponse')),
         },
       }),
     },
@@ -374,7 +398,7 @@ const openapi = {
       }),
     },
     '/v1/teams/{team}': {
-      get: authenticatedGet(['Teams and sessions'], 'Resolve team settings and authorized cloud models', 'team', ref('Team'), [
+      get: teamGet(ref('Team'), [
         pathParam('team', 'Canonical team id', '%40s46%2Fengineering'),
         queryParam('endpoint', 'Development endpoint override'),
         queryParam('region', 'Development region override'),
@@ -461,7 +485,7 @@ const openapi = {
     '/v1/admin/teams/{team}': {
       get: {
         ...adminGet('Read stored team settings, not authorized model discovery', 'getAdminTeam', ref('Team'), [pathParam('team', 'Canonical team id', '%40s46%2Fengineering')]),
-        description: 'On a running service, registry verification outages do not block settings reads. Existing authentication and scope checks still apply. Use public GET /v1/teams/{team} for authorized cloud models and runtime metadata.',
+        description: 'On a running service, registry verification outages do not block settings reads. Existing authentication and scope checks still apply. Use authenticated gateway GET /v1/models for exact-grant production discovery and authoritative active runtime metadata.',
       },
       put: adminWrite('Update team', 'putTeam', ref('Team'), ref('Team'), '200', [pathParam('team', 'Canonical team id', '%40s46%2Fengineering')]),
       patch: adminWrite('Patch team', 'patchTeam', ref('Team'), ref('Team'), '200', [pathParam('team', 'Canonical team id', '%40s46%2Fengineering')]),
@@ -514,12 +538,29 @@ const openapi = {
       post: modelAdminWrite('Queue signed model yank and block serving', 'queueModelYank', ref('ModelYankRequest'), ref('ModelRelease'), '202', [pathParam('releaseId', 'Model release id', 'rel_...'), headerParam('If-Match', 'Known release ETag/revision', true), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true)]),
     },
     '/v1/admin/models': {
-      get: modelAdminGet('Inspect registry catalog and verification state', 'listModels', ref('ModelCatalogResponse'), [queryParam('organization', 'Organization slug'), queryParam('team', 'Canonical team id')]),
+      get: modelAdminGet('Inspect registry catalog, exact release identities, and grant state', 'listModels', ref('ModelCatalogResponse'), [queryParam('organization', 'Organization slug'), queryParam('team', 'Canonical team id; includes legacy policies and exact-release grants when supplied'), queryParam('model', 'Public model ID filter for exact release identities')]),
     },
     '/v1/admin/model-policies': {
-      get: modelAdminGet('List team model policies', 'listModelPolicies', collection('modelPolicies', ref('TeamModelPolicy')), [queryParam('team', 'Canonical team id', true)]),
-      put: modelAdminWrite('Set team model policy', 'putModelPolicy', ref('TeamModelPolicyRequest'), ref('TeamModelPolicy'), '200', [headerParam('Idempotency-Key', 'Idempotency key for safe retry', true), headerParam('If-Match', 'Known policy ETag/revision')]),
-      patch: modelAdminWrite('Patch team model policy', 'patchModelPolicy', ref('TeamModelPolicyRequest'), ref('TeamModelPolicy'), '200', [headerParam('Idempotency-Key', 'Idempotency key for safe retry', true), headerParam('If-Match', 'Known policy ETag/revision')]),
+      get: modelAdminGet('List retired team model-ID policies', 'listModelPolicies', collection('modelPolicies', ref('TeamModelPolicy')), [queryParam('team', 'Canonical team id', true)]),
+      put: modelAdminWrite('Revoke a legacy team model-ID policy', 'putModelPolicy', ref('TeamModelPolicyRequest'), ref('TeamModelPolicy'), '200', [queryParam('team', 'Canonical team id when omitted from the body'), queryParam('model', 'Public model ID when omitted from the body'), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true), headerParam('If-Match', 'Existing policy ETag/revision; legacy policies cannot be created or re-enabled', true)]),
+      patch: modelAdminWrite('Revoke a legacy team model-ID policy', 'patchModelPolicy', ref('TeamModelPolicyRequest'), ref('TeamModelPolicy'), '200', [queryParam('team', 'Canonical team id when omitted from the body'), queryParam('model', 'Public model ID when omitted from the body'), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true), headerParam('If-Match', 'Existing policy ETag/revision; legacy policies cannot be created or re-enabled', true)]),
+    },
+    '/v1/admin/model-release-grants': {
+      get: modelAdminGet('List exact-release grants for a team', 'listModelReleaseGrants', collection('modelReleaseGrants', ref('TeamModelReleaseGrant')), [queryParam('team', 'Canonical team id', true)]),
+      put: modelAdminWrite('Create, revoke, or update an exact-release grant', 'putModelReleaseGrant', ref('TeamModelReleaseGrantRequest'), ref('TeamModelReleaseGrant'), '200', [queryParam('team', 'Canonical team id when omitted from the body'), queryParam('release', 'Exact sha256 release ID when omitted from the body'), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true), headerParam('If-Match', 'Required for an existing grant; omit when creating a grant')]),
+      patch: modelAdminWrite('Create, revoke, or update an exact-release grant', 'patchModelReleaseGrant', ref('TeamModelReleaseGrantRequest'), ref('TeamModelReleaseGrant'), '200', [queryParam('team', 'Canonical team id when omitted from the body'), queryParam('release', 'Exact sha256 release ID when omitted from the body'), headerParam('Idempotency-Key', 'Idempotency key for safe retry', true), headerParam('If-Match', 'Required for an existing grant; omit when creating a grant')]),
+    },
+    '/v1/admin/serving-authority': {
+      get: operation(['Models'], 'Inspect current non-secret serving-authority metadata', 'getServingAuthority', {
+        security: operatorSecurity,
+        responses: {
+          '200': response('Current serving-authority heads and expiry times', collection('data', ref('ServingAuthorityView'))),
+          '403': response('Configured operator credentials required; tenant credentials are not accepted', ref('ErrorResponse')),
+          '405': errorResponses['405'],
+          '500': errorResponses['500'],
+          '503': response('serving_authority_unavailable', ref('ErrorResponse')),
+        },
+      }),
     },
     '/v1/admin/workers': {
       get: adminGet('List workers', 'listWorkers', collection('workers', ref('Worker')), [queryParam('team', 'Canonical team id'), queryParam('kind', 'Worker kind'), queryParam('region', 'Region'), queryParam('state', 'Worker state')]),
@@ -606,7 +647,7 @@ const openapi = {
       get: publicGet(['Harness gateway'], 'Get local gateway worker', 'gatewayWorker', ref('GatewayWorker'), [pathParam('id', 'Gateway worker id', 'local-llamacpp')], gatewayServers),
     },
     '/v1/models': {
-      get: gatewayGet('OpenAI-compatible model list', 'openAIModels', ref('OpenAIModelList')),
+      get: gatewayModelGet('OpenAI-compatible authorized model list', 'openAIModels', ref('OpenAIModelList')),
     },
     '/v1/responses': {
       post: gatewayPost('OpenAI Responses-compatible request', 'openAIResponses', ref('OpenAIResponsesRequest'), ref('OpenAIResponse')),
@@ -615,13 +656,13 @@ const openapi = {
       post: gatewayPost('OpenAI Chat Completions-compatible request', 'openAIChatCompletions', ref('OpenAIChatCompletionRequest'), ref('OpenAIChatCompletion')),
     },
     '/anthropic/v1/models': {
-      get: gatewayGet('Anthropic-compatible model list', 'anthropicModels', ref('AnthropicModelList')),
+      get: gatewayModelGet('Anthropic-compatible authorized model list', 'anthropicModels', ref('AnthropicModelList')),
     },
     '/anthropic/v1/messages': {
       post: gatewayPost('Anthropic Messages-compatible request', 'anthropicMessages', ref('AnthropicMessageRequest'), ref('AnthropicMessage')),
     },
     '/codex/v1/models': {
-      get: gatewayGet('Codex/OpenAI-compatible model list', 'codexModels', ref('OpenAIModelList')),
+      get: gatewayModelGet('Codex/OpenAI-compatible authorized model list', 'codexModels', ref('OpenAIModelList')),
     },
     '/codex/v1/responses': {
       post: gatewayPost('Codex Responses-compatible request', 'codexResponses', ref('OpenAIResponsesRequest'), ref('OpenAIResponse')),
@@ -696,14 +737,16 @@ function buildSchemas() {
       properties: {
         status: { type: 'string', enum: ['ok', 'unavailable'] },
         database: { type: 'string', enum: ['ok', 'disabled', 'unavailable'] },
-        modelRegistry: { type: 'string', enum: ['unavailable'], description: 'Present only when the enabled independent registry check fails, after the database check passes.' },
+        modelRegistry: { type: 'string', enum: ['ok', 'unavailable'], description: 'Present after the database check when model control is configured.' },
+        servingAuthority: { type: 'string', enum: ['ok', 'unavailable'], description: 'Present after the database check. A registry failure also marks serving authority unavailable.' },
       },
       examples: [
-        { status: 'ok', database: 'ok' },
-        { status: 'ok', database: 'disabled' },
+        { status: 'ok', database: 'ok', modelRegistry: 'ok', servingAuthority: 'ok' },
+        { status: 'ok', database: 'disabled', modelRegistry: 'ok', servingAuthority: 'ok' },
         { status: 'unavailable', database: 'unavailable' },
-        { status: 'unavailable', database: 'ok', modelRegistry: 'unavailable' },
-        { status: 'unavailable', database: 'disabled', modelRegistry: 'unavailable' },
+        { status: 'unavailable', database: 'ok', modelRegistry: 'unavailable', servingAuthority: 'unavailable' },
+        { status: 'unavailable', database: 'disabled', modelRegistry: 'unavailable', servingAuthority: 'unavailable' },
+        { status: 'unavailable', database: 'ok', modelRegistry: 'ok', servingAuthority: 'unavailable' },
       ],
     },
     OKResponse: { type: 'object', properties: { ok: { type: 'boolean' } } },
@@ -880,7 +923,7 @@ function buildSchemas() {
     },
     Team: {
       type: 'object',
-      description: 'Shared team settings shape. Public GET /v1/teams/{team} resolves authorized cloud models and runtime metadata under the registry gate. Admin team routes read/write configured settings instead; their model fields are not serving authority.',
+      description: 'Shared team settings shape. The models and modelMetadata fields on GET /v1/teams/{team} are compatibility fields, not exact serving-authority discovery. Admin routes expose configured settings. Use authenticated gateway GET /v1/models for authoritative production discovery.',
       properties: {
         id: { type: 'string' },
         name: { type: 'string' },
@@ -891,9 +934,9 @@ function buildSchemas() {
         region: { type: 'string' },
         mode: { type: 'string' },
         workerHosts: { type: 'array', items: { type: 'string' } },
-        defaultModel: { type: 'string', description: 'Configured preference; may be absent from the currently authorized model list.' },
-        models: { type: ['array', 'null'], items: { type: 'string' }, description: 'Public cloud team resolution returns servable, team-allowed IDs. Admin responses contain configured IDs (possibly null), not an authorized discovery list.' },
-        modelMetadata: { type: ['object', 'null'], additionalProperties: ref('ModelRuntime'), description: 'Responses include this field. Only public cloud team resolution recomputes the authoritative authorized runtime map. Admin/local settings may return null; stored or submitted metadata does not establish serving trust.' },
+        defaultModel: { type: 'string', description: 'Configured preference. Validate it against authenticated gateway model discovery; neither this field nor the team compatibility list proves current authorization.' },
+        models: { type: ['array', 'null'], items: { type: 'string' }, description: 'Compatibility model IDs, not authoritative exact serving-authority discovery. Admin responses contain configured IDs (possibly null). Use authenticated gateway GET /v1/models for production authorization.' },
+        modelMetadata: { type: ['object', 'null'], additionalProperties: ref('ModelRuntime'), description: 'Compatibility runtime metadata, not authoritative exact serving-authority discovery. Admin/local settings may return null; stored or submitted metadata does not establish serving trust.' },
         monthlyCapMicros: { type: 'integer' },
         memberCount: { type: 'integer' },
         deviceCount: { type: 'integer' },
@@ -935,6 +978,7 @@ function buildSchemas() {
     ModelCatalogEntry: {
       type: 'object',
       properties: {
+        releaseId: { type: 'string', description: 'Immutable sha256 identity of the exact authenticated registry manifest bytes; distinct from rel_ API lifecycle IDs.' },
         format: { type: 'string', enum: ['gguf', 'safetensors'], description: 'Native safetensors use a package.json inventory; older manifests may omit format.' },
         runtime: ref('ModelRuntime'),
         id: { type: 'string' },
@@ -977,9 +1021,40 @@ function buildSchemas() {
     },
     ModelCatalogResponse: {
       type: 'object',
+      required: ['models', 'modelReleaseIdentities'],
       properties: {
         models: { type: 'array', items: ref('ModelCatalogEntry') },
-        modelPolicies: { type: 'array', items: ref('TeamModelPolicy') },
+        modelReleaseIdentities: { type: 'array', maxItems: 1000, items: ref('ModelReleaseIdentity') },
+        modelPolicies: { type: 'array', items: ref('TeamModelPolicy'), description: 'Retired model-ID-wide policy history; included only when team is supplied.' },
+        modelReleaseGrants: { type: 'array', items: ref('TeamModelReleaseGrant'), description: 'Exact-release grants; included only when team is supplied.' },
+      },
+    },
+    ModelReleaseIdentity: {
+      type: 'object',
+      description: 'Append-only identity of exact authenticated registry manifest bytes. This sha256 release ID is distinct from the mutable rel_ API release-workflow resource.',
+      properties: {
+        id: { type: 'string' },
+        modelId: { type: 'string' },
+        version: { type: 'string' },
+        format: { type: 'string', enum: ['gguf', 'safetensors'] },
+        filename: { type: 'string' },
+        backendModel: { type: 'string' },
+        manifestSha256: { type: 'string' },
+        manifestSizeBytes: { type: 'integer', format: 'int64' },
+        manifestSignatureSha256: { type: 'string' },
+        manifestSignatureSizeBytes: { type: 'integer', format: 'int64' },
+        manifestSigningKeyId: { type: 'string' },
+        manifestSigningIssuer: { type: 'string' },
+        manifestSigningSubject: { type: 'string' },
+        artifactSha256: { type: 'string' },
+        artifactSizeBytes: { type: 'integer', format: 'int64' },
+        artifactDigest: { type: 'string' },
+        bundleDigest: { type: 'string' },
+        releaseSignatureSubjectDigest: { type: 'string' },
+        runtime: ref('ModelRuntime'),
+        runtimeIdentitySha256: { type: 'string' },
+        registryCreatedAt: timestamp,
+        createdAt: timestamp,
       },
     },
     CreateModelReleaseRequest: {
@@ -1035,19 +1110,67 @@ function buildSchemas() {
         isDefault: { type: 'boolean' },
         revision: { type: 'integer' },
         etag: { type: 'string' },
+        retiredAt: timestamp,
+        retirementReason: { type: 'string' },
+        retiredAllowed: { type: 'boolean' },
+        retiredIsDefault: { type: 'boolean' },
         createdAt: timestamp,
         updatedAt: timestamp,
       },
     },
     TeamModelPolicyRequest: {
       type: 'object',
-      description: 'Stored model grant edit. On a running service, registry verification outages do not block edits; authentication, scope, ETag, and idempotency rules still apply. Saving or enabling a grant does not reopen model serving without independent verification.',
-      required: ['team', 'modelId'],
+      description: 'Legacy model-ID-wide policy revocation. allowed must be false and isDefault must be absent or false. Existing authentication, scope, ETag, and idempotency rules apply; these rows cannot be created or re-enabled.',
+      required: ['allowed'],
+      properties: {
+        team: { type: 'string', description: 'May instead be supplied as the team query parameter.' },
+        modelId: { type: 'string', description: 'May instead be supplied as the model query parameter.' },
+        allowed: { const: false },
+        isDefault: { enum: [false, null] },
+      },
+    },
+    TeamModelReleaseGrant: {
+      type: 'object',
+      description: 'Team authorization for one immutable sha256 registry release. It does not transfer to replacement manifest bytes.',
       properties: {
         team: { type: 'string' },
+        organizationSlug: { type: 'string' },
+        releaseId: { type: 'string' },
         modelId: { type: 'string' },
         allowed: { type: 'boolean' },
-        isDefault: { type: 'boolean' },
+        enabledUnderActivationId: { type: 'string' },
+        authoritySnapshotSha256: { type: 'string' },
+        revision: { type: 'integer' },
+        etag: { type: 'string' },
+        createdBy: { type: 'string' },
+        updatedBy: { type: 'string' },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    },
+    TeamModelReleaseGrantRequest: {
+      type: 'object',
+      required: ['allowed'],
+      description: 'Creates or updates an exact-release grant. Enabling requires current serving authority for this release. Revocation remains available during authority outages.',
+      properties: {
+        team: { type: 'string', description: 'May instead be supplied as the team query parameter.' },
+        releaseId: { type: 'string', description: 'Exact sha256 registry release identity; may instead be supplied as the release query parameter.' },
+        allowed: { type: 'boolean' },
+      },
+    },
+    ServingAuthorityView: {
+      type: 'object',
+      description: 'Non-secret operator inspection metadata. The API has no route for submitting or signing activation evidence.',
+      properties: {
+        releaseId: { type: 'string' },
+        modelId: { type: 'string' },
+        deploymentId: { type: 'string' },
+        activationId: { type: 'string' },
+        loadedIdentityId: { type: 'string' },
+        routeId: { type: 'string' },
+        instanceId: { type: 'string' },
+        activationExpiresAt: timestamp,
+        loadedIdentityExpiresAt: timestamp,
       },
     },
     Overview: {
@@ -1170,7 +1293,7 @@ function buildSchemas() {
     LeaseRequest: { type: 'object', required: ['workerId'], properties: { workerId: { type: 'string' }, leaseSeconds: { type: 'integer' } } },
     LeaseResult: { type: 'object', properties: { job: ref('Job'), lease: ref('JobLease') } },
     LeaseAckRequest: { type: 'object', required: ['workerId', 'jobId', 'leaseId'], properties: { workerId: { type: 'string' }, jobId: { type: 'string' }, leaseId: { type: 'string' } } },
-    JobCompletion: { type: 'object', properties: { state: { type: 'string', enum: ['succeeded', 'failed', 'canceled'] }, payload: stringMap, usage: ref('UsageEvent') } },
+    JobCompletion: { type: 'object', properties: { state: { type: 'string', enum: ['succeeded', 'failed', 'canceled'] }, payload: stringMap, usage: { ...ref('UsageEvent'), deprecated: true, description: 'Retired. Any nonzero or nonempty worker-reported usage field is rejected; cloud inference usage is written only by synchronous gateway reservation settlement.' } } },
     CompleteJobRequest: { type: 'object', required: ['workerId', 'jobId', 'leaseId', 'completion'], properties: { workerId: { type: 'string' }, jobId: { type: 'string' }, leaseId: { type: 'string' }, completion: ref('JobCompletion') } },
     RetryJobRequest: { type: 'object', properties: { runAfter: timestamp } },
     UsageEvent: {
@@ -1183,6 +1306,12 @@ function buildSchemas() {
         sessionId: { type: 'string' },
         jobId: { type: 'string' },
         model: { type: 'string' },
+        releaseId: { type: 'string' },
+        activationId: { type: 'string' },
+        loadedIdentityId: { type: 'string' },
+        routeId: { type: 'string' },
+        routeInstanceId: { type: 'string' },
+        usageRequestId: { type: 'string' },
         inputTokens: { type: 'integer' },
         outputTokens: { type: 'integer' },
         costMicros: { type: 'integer' },
@@ -1308,11 +1437,12 @@ function buildSchemas() {
     },
     OpenAIChatCompletionRequest: {
       type: 'object', additionalProperties: true,
-      description: 'Chat payload is forwarded to the verified backend after authorization, model mapping, and output-limit validation. max_output_tokens and n_predict are rejected with 400 invalid_request.',
+      description: 'Chat payload is dispatched only after exact serving authorization and worst-case usage reservation. Protected requests permit one output trajectory: n and best_of must be absent or exactly 1, and beam or multi-sample extensions are rejected. max_output_tokens and n_predict return 400 invalid_request.',
       properties: {
         model: { type: 'string', description: 'Authorized public ID; omitted uses the configured team default.' },
         messages: { type: 'array', items: { type: 'object', additionalProperties: true } },
         stream: { type: 'boolean' }, max_tokens: ref('OutputTokenLimit'), max_completion_tokens: ref('OutputTokenLimit'),
+        n: { const: 1 }, best_of: { const: 1 },
         max_output_tokens: false, n_predict: false,
       },
     },

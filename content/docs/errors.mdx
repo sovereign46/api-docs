@@ -43,7 +43,7 @@ Grouped by status class. Every `code` below is stable and safe to switch on.
 | `428` | `authorization_pending` | Polling target is not ready yet — see contexts below. |
 | `428` | `precondition_required` | A required header such as `Idempotency-Key` is missing. |
 | `429` | `rate_limited` | Request or stream rate limit exceeded. |
-| `429` | `capacity_limited` | Capacity exists but is temporarily saturated. |
+| `429` | `monthly_cap_exceeded` | The atomic monthly ledger cannot reserve the signed worst-case request cost; no upstream request was made. |
 
 ### 5xx — service & availability
 
@@ -51,7 +51,8 @@ Grouped by status class. Every `code` below is stable and safe to switch on.
 | --- | --- | --- |
 | `503` | `email_unavailable` | Invite or magic-link email delivery is not configured or failed. |
 | `503` | `model_registry_unavailable` | Independent registry verification has not succeeded or is no longer current. |
-| `503` | `model_unavailable` | No ready upstream/local model worker is available. |
+| `503` | `serving_authority_unavailable` | Exact deployment, activation, protected route, or challenged loaded identity is unavailable or invalid. |
+| `503` | `model_unavailable` | No protected serving route or ready local model worker is available. |
 | `502` | `upstream_error` | Model upstream request, status, or response failed. |
 | `503` | `service_unavailable` | Control service is unavailable. |
 | `503` | `rate_limiter_unavailable` | Rate-limiter backend is unavailable. |
@@ -71,7 +72,9 @@ This one code is shared by several polling-style endpoints — the caller should
 | `authorization_pending` | Retry after the endpoint-specific polling interval, or use exponential backoff. |
 | `401 unauthorized` | Refresh credentials only if you hold a valid refresh token/cookie; otherwise restart login. |
 | `403 forbidden` / `model_not_allowed` | Do not retry blindly — change credentials, membership, or model policy first. |
-| `503 model_registry_unavailable` | Wait for service verification to recover; refreshing credentials or changing model policy does not repair trust. |
+| `503 model_registry_unavailable` | Wait for registry verification to recover; refreshing credentials or changing a grant does not repair trust. |
+| `503 serving_authority_unavailable` | Wait for signed deployment/activation/loaded-route authority to recover; a broader grant cannot repair it. |
+| `429 monthly_cap_exceeded` | Do not retry unchanged until capacity is available or an authorized administrator changes the cap. |
 | `400 invalid_request` / `unsupported_feature` | Correct the payload, limits, or unsupported feature; do not retry unchanged. |
 | retrying mutations | Preserve and reuse the same `Idempotency-Key` for safe retries. |
 | `error.message` | Do not parse it — it is human-readable and may change. Use `code`. |

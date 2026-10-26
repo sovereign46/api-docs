@@ -30,12 +30,12 @@ Identifiers contain `@` and `/`, so path parameters must be URL path-escaped and
 
 ## Rate limits
 
-Limits are enforced per credential and per IP on streaming routes. Two distinct conditions exist — back off on both:
+Request rate limiting and monthly inference accounting are distinct. Back off for rate limits; a monthly-cap failure requires capacity or policy to change:
 
 | Status | Code | Meaning & response |
 | --- | --- | --- |
 | `429` | `rate_limited` | Request or stream rate exceeded. Retry after `Retry-After`; otherwise use exponential backoff with jitter. |
-| `429` | `capacity_limited` | Model/worker capacity exists but is momentarily saturated. Safe to retry shortly — this is transient. |
+| `429` | `monthly_cap_exceeded` | Worst-case production inference cost cannot be reserved under the team's UTC monthly cap. No upstream request was made; do not treat this as a transient rate limit. |
 | `503` | `rate_limiter_unavailable` | Rate-limiter backend is down. Retry with backoff; do not hammer. |
 
 <Note tag="Backoff">
@@ -67,22 +67,20 @@ If-Match: "rev-42"
 Content-Type: application/json
 ```
 
-A stale revision is rejected with `412 precondition_failed`. Re-read the resource, reapply your change, and retry.
+When `412 precondition_failed` indicates a stale revision, re-read the resource, reapply your change, and retry with its current ETag. The same code has other endpoint-specific meanings and must not trigger this retry flow automatically. In particular, creating an exact-release allow grant returns it when the release is not active under current serving authority or that authority is unavailable; an operator must restore or provision authority for that exact release first. Exact-release grants are conditional: omit `If-Match` to create an absent grant, but include the current ETag to update or revoke an existing one. Legacy model-ID policies are revoke-only and always require their existing ETag.
 
 ## Pagination
 
-List endpoints (people, devices, jobs, audit, usage) are cursor-paginated. Pass `limit` and an opaque `cursor`; never construct cursors yourself.
+List query and envelope shapes are route-specific; do not assume cursor pagination. In particular, `GET /v1/admin/usage` and `GET /v1/admin/audit` are bounded `limit`-only lists (with an optional `team` filter). They do not accept `cursor` or return `hasMore` / `nextCursor`.
 
 ```json
-// GET /v1/admin/people?limit=50&cursor=eyJvIjoxMDB9
+// GET /v1/admin/audit?limit=50
 {
-  "data": [ /* ... up to `limit` items ... */ ],
-  "hasMore": true,
-  "nextCursor": "eyJvIjoxNTB9"
+  "auditEvents": [ /* ... up to `limit` events ... */ ]
 }
 ```
 
-When `hasMore` is `true`, pass `nextCursor` as the next request's `cursor`. A `null` `nextCursor` means you have reached the end.
+Usage uses the corresponding `{ "usage": [...] }` envelope. Follow each route's documented query parameters and response envelope.
 
 ## Versioning & deprecation
 

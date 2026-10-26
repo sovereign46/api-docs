@@ -39,7 +39,7 @@ const exposedPaths = [
   '/v1/admin/model-releases/{releaseId}/upload-session', '/v1/admin/model-releases/{releaseId}/finalize-upload',
   '/v1/admin/model-releases/{releaseId}/validate', '/v1/admin/model-releases/{releaseId}/publish',
   '/v1/admin/model-releases/{releaseId}/yank', '/v1/admin/models', '/v1/admin/model-policies',
-  '/v1/admin/workers', '/v1/admin/workers/{id}', '/v1/admin/workers/{id}/logs',
+  '/v1/admin/model-release-grants', '/v1/admin/serving-authority', '/v1/admin/workers', '/v1/admin/workers/{id}', '/v1/admin/workers/{id}/logs',
   '/v1/admin/workers/{id}/drain', '/v1/admin/workers/{id}/revoke',
   '/v1/admin/jobs', '/v1/admin/jobs/{id}/logs', '/v1/admin/jobs/{id}/cancel', '/v1/admin/jobs/{id}/retry',
   '/v1/admin/schedules', '/v1/admin/usage', '/v1/admin/audit', '/v1/admin/leases/reconcile', '/v1/admin/seed',
@@ -186,27 +186,36 @@ test('readiness 503 is a status response, not the API error envelope', () => {
     assert.equal(ready.responses[status].content['application/json'].schema.$ref, '#/components/schemas/ReadyResponse');
   }
   assert.deepEqual(schemas.ReadyResponse.required, ['status', 'database']);
-  assert.deepEqual(schemas.ReadyResponse.properties.modelRegistry.enum, ['unavailable']);
+  assert.deepEqual(schemas.ReadyResponse.properties.modelRegistry.enum, ['ok', 'unavailable']);
+  assert.deepEqual(schemas.ReadyResponse.properties.servingAuthority.enum, ['ok', 'unavailable']);
   assert.deepEqual(schemas.ReadyResponse.examples, [
-    { status: 'ok', database: 'ok' },
-    { status: 'ok', database: 'disabled' },
+    { status: 'ok', database: 'ok', modelRegistry: 'ok', servingAuthority: 'ok' },
+    { status: 'ok', database: 'disabled', modelRegistry: 'ok', servingAuthority: 'ok' },
     { status: 'unavailable', database: 'unavailable' },
-    { status: 'unavailable', database: 'ok', modelRegistry: 'unavailable' },
-    { status: 'unavailable', database: 'disabled', modelRegistry: 'unavailable' },
+    { status: 'unavailable', database: 'ok', modelRegistry: 'unavailable', servingAuthority: 'unavailable' },
+    { status: 'unavailable', database: 'disabled', modelRegistry: 'unavailable', servingAuthority: 'unavailable' },
+    { status: 'unavailable', database: 'ok', modelRegistry: 'ok', servingAuthority: 'unavailable' },
   ]);
 });
 
-test('runtime schemas and the team example preserve authorized metadata', () => {
+test('runtime schemas distinguish gateway authority from team compatibility metadata', () => {
   assert.deepEqual(Object.keys(schemas.ModelRuntime.properties).sort(), [
-    'engine', 'version', 'profileSha256', 'contextWindow', 'maxTokens', 'reasoning', 'minMemoryBytes', 'recommendedMemoryBytes',
+    'engine', 'version', 'profileSha256', 'closureSha256', 'closureSizeBytes', 'contextWindow', 'maxTokens', 'reasoning', 'minMemoryBytes', 'recommendedMemoryBytes',
   ].sort());
   assert.deepEqual(schemas.ModelRuntime.required, ['reasoning']);
   assert.equal(schemas.ModelRuntime.properties.reasoning.type, 'boolean');
+  assert.equal(schemas.ModelRuntime.properties.closureSha256.type, 'string');
+  assert.equal(schemas.ModelRuntime.properties.closureSizeBytes.type, 'integer');
+  assert.equal(schemas.ModelRuntime.properties.closureSizeBytes.format, 'int64');
   const metadata = schemas.Team.properties.modelMetadata;
   assert.deepEqual(metadata.type, ['object', 'null']);
   assert.equal(metadata.readOnly, undefined, 'shared settings schema must not promise all metadata is computed');
   assert.ok(!(schemas.Team.required ?? []).includes('modelMetadata'), 'settings writes must not require discovery metadata');
   assert.deepEqual(schemas.Team.properties.models.type, ['array', 'null']);
+  assert.match(schemas.Team.description, /compatibility fields, not exact serving-authority discovery/);
+  assert.match(schemas.Team.description, /authenticated gateway GET \/v1\/models/);
+  assert.match(schemas.Team.properties.models.description, /Compatibility model IDs/);
+  assert.match(metadata.description, /Compatibility runtime metadata/);
   assert.equal(metadata.additionalProperties.$ref, '#/components/schemas/ModelRuntime');
   assert.equal(schemas.ModelCatalogEntry.properties.runtime.$ref, metadata.additionalProperties.$ref);
   assert.deepEqual(schemas.ModelCatalogEntry.properties.format.enum, ['gguf', 'safetensors']);
@@ -215,33 +224,106 @@ test('runtime schemas and the team example preserve authorized metadata', () => 
 
   const team = JSON.parse(docs['teams-sessions.mdx'].match(/```json\n([\s\S]*?)\n```/)[1]);
   for (const field of Object.keys(team)) assert.ok(field in schemas.Team.properties, field);
-  assert.ok(team.models.includes(team.defaultModel));
-  assert.deepEqual(Object.keys(team.modelMetadata).sort(), team.models.toSorted());
-  for (const runtime of Object.values(team.modelMetadata)) {
-    for (const [field, value] of Object.entries(runtime)) {
-      const type = schemas.ModelRuntime.properties[field]?.type;
-      assert.ok(type, `undocumented runtime field ${field}`);
-      assert.ok(type === 'integer' ? Number.isInteger(value) : typeof value === type, field);
-    }
-    assert.ok(runtime.maxTokens <= runtime.contextWindow);
-    for (const required of schemas.ModelRuntime.required) assert.ok(required in runtime);
+  assert.deepEqual(team.models, []);
+  assert.deepEqual(team.modelMetadata, {});
+  assert.ok(!team.models.includes(team.defaultModel));
+  assert.match(docs['teams-sessions.mdx'], /compatibility fields/);
+  assert.match(docs['teams-sessions.mdx'], /Authenticated gateway model discovery is the authoritative production path/);
+  const publicTeamContract = `${docs['teams-sessions.mdx']}\n${JSON.stringify(schemas.Team)}`;
+  for (const implementationDetail of ['TeamServingCatalog', 'until the API source is corrected', 'retired legacy model-ID policies']) {
+    assert.ok(!publicTeamContract.includes(implementationDetail), implementationDetail);
   }
 });
 
-test('admin settings and grant edits are distinguished from gated public discovery', () => {
+test('admin settings, retired policies, and exact grants remain distinct from serving authorization', () => {
   const settings = api.paths['/v1/admin/teams/{team}'].get;
   assert.match(settings.summary, /stored team settings/);
   assert.match(settings.description, /outages do not block settings reads/);
-  assert.match(schemas.TeamModelPolicyRequest.description, /outages do not block edits/);
-  assert.match(schemas.TeamModelPolicyRequest.description, /does not reopen model serving/);
-  assert.match(schemas.Team.properties.models.description, /configured IDs/);
-  assert.match(schemas.Team.properties.modelMetadata.description, /Only public cloud team resolution/);
-  assert.match(api.paths['/v1/teams/{team}'].get.summary, /authorized cloud models/);
+  assert.match(schemas.TeamModelPolicyRequest.description, /revocation/);
+  assert.equal(schemas.TeamModelPolicyRequest.properties.allowed.const, false);
+  assert.deepEqual(schemas.TeamModelPolicyRequest.properties.isDefault.enum, [false, null]);
+  for (const method of ['put', 'patch']) {
+    const operation = api.paths['/v1/admin/model-policies'][method];
+    const headers = Object.fromEntries(operation.parameters.filter((parameter) => parameter.in === 'header').map((parameter) => [parameter.name, parameter]));
+    assert.equal(headers['Idempotency-Key'].required, true);
+    assert.equal(headers['If-Match'].required, true);
+  }
+  assert.match(schemas.Team.properties.models.description, /not authoritative exact serving-authority discovery/);
+  assert.match(schemas.Team.properties.modelMetadata.description, /not authoritative exact serving-authority discovery/);
+  assert.match(api.paths['/v1/teams/{team}'].get.summary, /settings and compatibility metadata/);
   assert.match(api.paths['/v1/teams/{team}'].get.responses['503'].description, /model_registry_unavailable/);
+  assert.doesNotMatch(api.paths['/v1/teams/{team}'].get.responses['503'].description, /serving_authority_unavailable/);
 });
 
-test('model discovery is public; verified model POST contracts include auth, SSE, and failures', () => {
-  for (const path of modelLists) assert.equal(api.paths[path].get.security, undefined);
+test('exact release identities and conditional grants are explicit', () => {
+  assert.match(schemas.ModelReleaseIdentity.description, /sha256 release ID.*rel_/);
+  assert.equal(schemas.ModelReleaseIdentity.properties.runtime.$ref, '#/components/schemas/ModelRuntime');
+  assert.deepEqual(schemas.ModelReleaseIdentity.properties.format.enum.toSorted(), ['', 'gguf', 'safetensors']);
+
+  const exactSha256Pattern = '^sha256:[0-9a-f]{64}$';
+  assert.equal(schemas.ExactSHA256.type, 'string');
+  assert.equal(schemas.ExactSHA256.pattern, exactSha256Pattern);
+  const exactIdentityFields = {
+    ModelCatalogEntry: ['releaseId'],
+    ModelReleaseIdentity: [
+      'id', 'manifestSha256', 'manifestSignatureSha256', 'artifactSha256', 'artifactDigest',
+      'bundleDigest', 'releaseSignatureSubjectDigest', 'runtimeIdentitySha256',
+    ],
+    TeamModelReleaseGrant: ['releaseId', 'enabledUnderActivationId', 'authoritySnapshotSha256'],
+    TeamModelReleaseGrantRequest: ['releaseId'],
+    ServingAuthorityView: ['releaseId', 'deploymentId', 'activationId', 'loadedIdentityId'],
+    UsageEvent: ['releaseId', 'activationId', 'loadedIdentityId'],
+  };
+  for (const [schemaName, fields] of Object.entries(exactIdentityFields)) {
+    for (const field of fields) {
+      assert.equal(schemas[schemaName].properties[field].$ref, '#/components/schemas/ExactSHA256', `${schemaName}.${field}`);
+    }
+  }
+  const exactSha256 = new RegExp(exactSha256Pattern);
+  assert.match(`sha256:${'0a'.repeat(32)}`, exactSha256);
+  for (const invalid of [`sha256:${'a'.repeat(63)}`, `sha256:${'A'.repeat(64)}`, 'sha256:test', 'rel_01']) {
+    assert.doesNotMatch(invalid, exactSha256);
+  }
+
+  assert.match(schemas.ModelCatalogEntry.properties.releaseId.description, /sha256 identity/);
+  assert.deepEqual(schemas.ModelCatalogResponse.required, ['models', 'modelReleaseIdentities']);
+  assert.equal(schemas.ModelCatalogResponse.properties.modelReleaseGrants.items.$ref, '#/components/schemas/TeamModelReleaseGrant');
+  assert.equal(schemas.ModelCatalogResponse.properties.modelReleaseIdentities.maxItems, 1000);
+  const modelParams = api.paths['/v1/admin/models'].get.parameters.map((parameter) => parameter.name);
+  assert.ok(modelParams.includes('model'));
+
+  const grantPath = api.paths['/v1/admin/model-release-grants'];
+  assert.deepEqual(Object.keys(grantPath).sort(), ['get', 'patch', 'put']);
+  assert.equal(grantPath.get.responses['200'].content['application/json'].schema.properties.modelReleaseGrants.items.$ref, '#/components/schemas/TeamModelReleaseGrant');
+  assert.match(schemas.TeamModelReleaseGrantRequest.description, /Revocation remains available/);
+  for (const method of ['get', 'put', 'patch']) assert.deepEqual(grantPath[method].security, [{ bearerAuth: [] }]);
+  assert.match(docs['models.mdx'], /owner or admin/);
+  for (const method of ['put', 'patch']) {
+    assert.equal(grantPath[method].requestBody.content['application/json'].schema.$ref, '#/components/schemas/TeamModelReleaseGrantRequest');
+    assert.equal(grantPath[method].responses['200'].content['application/json'].schema.$ref, '#/components/schemas/TeamModelReleaseGrant');
+    const headers = Object.fromEntries(grantPath[method].parameters.filter((parameter) => parameter.in === 'header').map((parameter) => [parameter.name, parameter]));
+    assert.equal(headers['Idempotency-Key'].required, true);
+    assert.equal(headers['If-Match'].required, false);
+    assert.match(headers['If-Match'].description, /Required for an existing grant; omit when creating/);
+  }
+  assert.match(docs['models.mdx'], /omit `If-Match` when creating/);
+  assert.match(docs['models.mdx'], /send the current grant ETag/);
+});
+
+test('serving authority inspection is operator-only, read-only, and non-secret', () => {
+  const authority = api.paths['/v1/admin/serving-authority'];
+  assert.deepEqual(Object.keys(authority), ['get']);
+  assert.deepEqual(authority.get.security, [{ operatorBearerAuth: [] }, { operatorAdminHeader: [] }]);
+  assert.equal(authority.get.responses['200'].content['application/json'].schema.properties.data.items.$ref, '#/components/schemas/ServingAuthorityView');
+  assert.deepEqual(Object.keys(schemas.ServingAuthorityView.properties).sort(), [
+    'releaseId', 'modelId', 'deploymentId', 'activationId', 'loadedIdentityId', 'routeId', 'instanceId', 'activationExpiresAt', 'loadedIdentityExpiresAt',
+  ].sort());
+  assert.match(schemas.ServingAuthorityView.description, /no route for submitting or signing activation evidence/);
+  assert.match(docs['serving-authority.mdx'], /not evidence that production has provisioned/);
+});
+
+test('production model discovery and verified model POST contracts include auth, SSE, and failures', () => {
+  for (const path of modelLists) assert.deepEqual(api.paths[path].get.security, [{ bearerAuth: [] }]);
   for (const path of gatewayPosts) {
     const operation = api.paths[path].post;
     assert.deepEqual(operation.security, [{ bearerAuth: [] }]);
@@ -250,12 +332,18 @@ test('model discovery is public; verified model POST contracts include auth, SSE
       assert.equal(operation.responses[status].content['application/json'].schema.$ref, '#/components/schemas/ErrorResponse');
     }
     assert.match(operation.responses['400'].description, /unsupported_feature/);
+    assert.match(operation.responses['429'].description, /rate_limited/);
+    assert.match(operation.responses['429'].description, /monthly_cap_exceeded.*before upstream dispatch/);
+    assert.doesNotMatch(operation.responses['429'].description, /capacity_limited/);
     assert.match(operation.responses['502'].description, /upstream_error/);
     assert.match(operation.responses['503'].description, /model_registry_unavailable/);
+    assert.match(operation.responses['503'].description, /serving_authority_unavailable/);
   }
-  for (const code of ['unsupported_feature', 'upstream_error', 'model_registry_unavailable']) {
+  for (const code of ['unsupported_feature', 'upstream_error', 'model_registry_unavailable', 'serving_authority_unavailable', 'monthly_cap_exceeded']) {
     assert.ok(docs['errors.mdx'].includes(`\`${code}\``), code);
   }
+  assert.ok(!docsText.includes('capacity_limited'));
+  assert.doesNotMatch(api.paths['/v1/me'].get.responses['429'].description, /capacity_limited/);
 });
 
 test('model assurance docs keep identity, release, activation, and inference separate', () => {
@@ -265,12 +353,12 @@ test('model assurance docs keep identity, release, activation, and inference sep
     'Runtime certification',
     'Release approval',
     'Registry publication',
-    'Authorized activation',
+    'Deployment / activation / loaded identity',
     'Production inference',
     'Not runtime certified',
     'Unavailable and unauthorized',
     'TinyStories documents lack previous-policy proofs',
-    'synchronous gateway usage accounting',
+    'synchronous monthly-cap accounting',
     'backend alias differs',
   ]) assert.ok(status.includes(phrase), phrase);
   for (const examplePage of ['gateway.mdx', 'teams-sessions.mdx']) {
@@ -282,6 +370,9 @@ test('model assurance docs keep identity, release, activation, and inference sep
 });
 
 test('cloud request schemas describe supported limits and reject stateful/unsupported features', () => {
+  assert.equal(schemas.Team.properties.monthlyCapMicros.type, 'integer');
+  assert.equal(schemas.Team.properties.monthlyCapMicros.format, 'int64');
+  assert.equal(schemas.Team.properties.monthlyCapMicros.minimum, 0);
   assert.equal(schemas.OutputTokenLimit.minimum, 1);
   assert.equal(schemas.OutputTokenLimit.maximum, 2147483647);
   const limits = {
@@ -301,8 +392,25 @@ test('cloud request schemas describe supported limits and reject stateful/unsupp
   assert.equal(responses.properties.reasoning.type, 'null');
   assert.equal(responses.properties.tools.items.properties.type.const, 'function');
   assert.equal(schemas.AnthropicMessageRequest.additionalProperties, false);
-  assert.equal(schemas.OpenAIChatCompletionRequest.properties.max_output_tokens, false);
-  assert.equal(schemas.OpenAIChatCompletionRequest.properties.n_predict, false);
+  const chat = schemas.OpenAIChatCompletionRequest;
+  assert.equal(chat.properties.max_output_tokens, false);
+  assert.equal(chat.properties.n_predict, false);
+  assert.equal(chat.properties.n.const, 1);
+  assert.equal(chat.properties.best_of.const, 1);
+  for (const field of [
+    'use_beam_search', 'beam_search', 'beam_search_options', 'beam_size', 'num_beams', 'beam_width',
+    'num_return_sequences', 'parallel_sampling', 'candidate_count', 'length_penalty', 'early_stopping',
+  ]) assert.equal(chat.properties[field], false, field);
+  assert.match(chat.description, /one output trajectory/);
+});
+
+test('usage schemas bind settlement to exact serving authority and retire worker accounting', () => {
+  assert.equal(schemas.JobCompletion.properties.usage, false);
+  assert.match(schemas.JobCompletion.description, /usage is retired and must be omitted/);
+  assert.match(schemas.JobCompletion.description, /synchronous gateway reservation settlement/);
+  assert.match(docs['gateway.mdx'], /settles durably before emitting its success terminal/);
+  assert.match(docs['serving-authority.mdx'], /response\.incomplete.*after settlement/);
+  assert.match(docs['worker-control.mdx'], /completion\.usage.*retired/);
 });
 
 test('quickstart executes discovery-driven calls and stops on unauthorized defaults/errors', async () => {
@@ -321,10 +429,16 @@ test('quickstart executes discovery-driven calls and stops on unauthorized defau
         }
         if (calls.length === 2) {
           assert.equal(url, 'https://api.s46.dev/v1/teams/%40example%2Fengineering');
-          if (scenario === 'registry-unavailable') return Response.json({ error: { code: 'model_registry_unavailable' } }, { status: 503 });
-          return Response.json({ endpoint: 'https://example.invalid/gateway/', defaultModel: 'example/authorized-model', models: scenario === 'success' ? ['example/authorized-model'] : [] });
+          return Response.json({ endpoint: 'https://example.invalid/gateway/', defaultModel: 'example/authorized-model', models: ['legacy-only-model'] });
         }
-        assert.equal(url, 'https://example.invalid/gateway/v1/chat/completions');
+        if (calls.length === 3) {
+          assert.equal(url, 'https://gateway.s46.dev/v1/models');
+          assert.equal(init.method, 'GET');
+          if (scenario === 'registry-unavailable') return Response.json({ error: { code: 'model_registry_unavailable' } }, { status: 503 });
+          const id = scenario === 'success' ? 'example/authorized-model' : 'example/another-authorized-model';
+          return Response.json({ object: 'list', data: [{ id, metadata: { releaseId: `sha256:${'0a'.repeat(32)}` } }] });
+        }
+        assert.equal(url, 'https://gateway.s46.dev/v1/chat/completions');
         assert.equal(init.method, 'POST');
         assert.equal(JSON.parse(init.body).model, 'example/authorized-model');
         return Response.json({ choices: [{ message: { content: 'ok' } }] });
@@ -332,7 +446,7 @@ test('quickstart executes discovery-driven calls and stops on unauthorized defau
     });
     if (scenario === 'success') await program;
     else await assert.rejects(program, scenario === 'registry-unavailable' ? /503.*model_registry_unavailable/ : /authorized model/);
-    assert.equal(calls.length, scenario === 'success' ? 3 : 2);
+    assert.equal(calls.length, scenario === 'success' ? 4 : 3);
   }
 });
 

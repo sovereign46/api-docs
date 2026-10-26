@@ -8,7 +8,7 @@ export type RouteEntry = {
 export const routeIndex = {
   operations: [
     { method: 'GET', path: '/healthz', href: '#liveness', description: 'Process liveness.' },
-    { method: 'GET', path: '/readyz', href: '#readiness', description: 'Database and independent registry readiness.' },
+    { method: 'GET', path: '/readyz', href: '#readiness', description: 'Database and model-serving readiness.' },
     { method: 'GET', path: '/debug/vars', href: '#diagnostics--support', description: 'Operator-authorized diagnostics.' },
     { method: 'GET', path: '/assets/auth.css', href: '#diagnostics--support', description: 'Auth page stylesheet.' }
   ],
@@ -27,7 +27,7 @@ export const routeIndex = {
     { method: 'DELETE', path: '/v1/devices/{deviceId}', href: '#paired-devices', description: 'Revoke one paired device.' },
   ],
   teamsSessions: [
-    { method: 'GET', path: '/v1/teams/{team}', href: '#resolve-team-metadata', description: 'Gateway config and authorized runtime metadata.' },
+    { method: 'GET', path: '/v1/teams/{team}', href: '#resolve-team-metadata', description: 'Gateway settings and compatibility metadata.' },
     { method: 'GET', path: '/v1/sessions', href: '#list-sessions', description: 'List team sessions.' },
   ],
   admin: [
@@ -47,9 +47,14 @@ export const routeIndex = {
     { method: 'POST', path: '/v1/admin/model-releases/{releaseId}/validate', href: '#model-release-lifecycle', description: 'Queue certification.' },
     { method: 'POST', path: '/v1/admin/model-releases/{releaseId}/publish', href: '#model-release-lifecycle', description: 'Queue publication.' },
     { method: 'POST', path: '/v1/admin/model-releases/{releaseId}/yank', href: '#model-release-lifecycle', description: 'Block serving and queue signed yank.' },
-    { method: 'GET', path: '/v1/admin/models', href: '#certified-models', description: 'Inspect catalog and verification state.' },
-    { method: 'GET', path: '/v1/admin/model-policies', href: '#team-model-policy', description: 'Read team policy.' },
-    { method: 'PUT', path: '/v1/admin/model-policies', href: '#team-model-policy', description: 'Set team policy.' },
+    { method: 'GET', path: '/v1/admin/models', href: '#catalog--exact-release-identities', description: 'Inspect catalog, immutable registry releases, and grant state.' },
+    { method: 'GET', path: '/v1/admin/model-policies', href: '#legacy-model-id-policies', description: 'Read retired model-ID policy history.' },
+    { method: 'PUT', path: '/v1/admin/model-policies', href: '#legacy-model-id-policies', description: 'Revoke a legacy model-ID policy.' },
+    { method: 'PATCH', path: '/v1/admin/model-policies', href: '#legacy-model-id-policies', description: 'Revoke a legacy model-ID policy.' },
+    { method: 'GET', path: '/v1/admin/model-release-grants', href: '#exact-release-grants', description: 'List exact-release team grants.' },
+    { method: 'PUT', path: '/v1/admin/model-release-grants', href: '#exact-release-grants', description: 'Create or update an exact-release grant.' },
+    { method: 'PATCH', path: '/v1/admin/model-release-grants', href: '#exact-release-grants', description: 'Create or update an exact-release grant.' },
+    { method: 'GET', path: '/v1/admin/serving-authority', href: '#serving-authority-inspection', description: 'Operator-only authority metadata.' },
   ],
   workerControl: [
     { method: 'POST', path: '/v1/worker/register', href: '#register', description: 'Operator-only provisioning; returns a worker credential.' },

@@ -25,18 +25,19 @@ Reports process liveness, not model availability:
 curl -i https://api.s46.dev/readyz
 ```
 
-Readiness requires a reachable database when configured and current independent registry verification when enabled. A healthy database or persisted catalog alone does not establish model readiness.
+Readiness requires a reachable database when configured, current independent registry verification, and current serving authority when enabled. Serving-authority readiness includes a matching persisted authority snapshot, valid deployment and activation, a fresh challenged loaded identity, protected route consistency, at least one trusted exact-release grant, and enough remaining monthly capacity for its signed worst-case reservation.
 
 | HTTP | Body | Meaning |
 | --- | --- | --- |
-| `200` | `{ "status": "ok", "database": "ok" }` | Configured checks passed. |
-| `200` | `{ "status": "ok", "database": "disabled" }` | No database configured; any enabled registry check passed. |
-| `503` | `{ "status": "unavailable", "database": "unavailable" }` | Database check failed; registry check was not reached. |
-| `503` | `{ "status": "unavailable", "database": "ok", "modelRegistry": "unavailable" }` | Registry verification has not succeeded or is no longer current. `database` can also be `disabled`. |
+| `200` | `{ "status": "ok", "database": "ok", "modelRegistry": "ok", "servingAuthority": "ok" }` | Configured checks passed. |
+| `200` | `{ "status": "ok", "database": "disabled", "modelRegistry": "ok", "servingAuthority": "ok" }` | No database is configured; applicable model checks passed. |
+| `503` | `{ "status": "unavailable", "database": "unavailable" }` | Database check failed; model checks were not reached. |
+| `503` | `{ "status": "unavailable", "database": "ok", "modelRegistry": "unavailable", "servingAuthority": "unavailable" }` | Registry verification failed; `database` can also be `disabled`. |
+| `503` | `{ "status": "unavailable", "database": "ok", "modelRegistry": "ok", "servingAuthority": "unavailable" }` | Registry is current, but serving authority, an exact grant, or worst-case capacity is unavailable. |
 
-Readiness failures use this status body, **not** the JSON error envelope. `modelRegistry` is present only for a registry failure. Missing or unsafe independent policy prevents startup; an unavailable registry after startup fails readiness and model serving without making liveness or authentication dependent on model availability.
+Readiness failures use this status body, **not** the JSON error envelope. `/healthz` remains liveness-only. A source implementation or future readiness `200` does not itself prove historical production deployment; inspect current authority metadata and retain same-window inference/accounting evidence.
 
-Policy provisioning belongs in the [operator runbook](https://github.com/sovereign46/api/blob/main/docs/deployment-trust-policy.md).
+Policy and evidence provisioning belongs in the API operator runbooks. See [Serving authority](/docs/serving-authority) for the public contract and [Model assurance status](/docs/model-status) for the dated production observation.
 
 ## Diagnostics & support
 

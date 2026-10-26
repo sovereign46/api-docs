@@ -3,9 +3,9 @@ title: Model assurance status
 description: Current public evidence and serving status for Devstral and DeepSeek.
 ---
 
-This page keeps artifact identity, runtime certification, release approval, registry publication, transparency, activation, and inference separate. Passing one stage does not imply any later stage.
+This page keeps artifact identity, runtime certification, release approval, registry publication, transparency, deployment, activation, loaded identity, exact grant, accounting, and inference separate. Passing one stage does not imply any later stage. The source implements those gates; this dated report does not claim that production has provisioned their evidence.
 
-> **Observed 2026-10-24T23:18:52Z.** This is a dated status report, not signing or activation authority. Use [`/readyz`](/docs/operations#readiness), team resolution, and signed [models.s46.dev](https://models.s46.dev) metadata for live decisions.
+> **Observed 2026-10-24T23:18:52Z.** This is a dated status report, not signing or activation authority. Use [`/readyz`](/docs/operations#readiness), authenticated gateway model discovery, and signed [models.s46.dev](https://models.s46.dev) metadata for live decisions.
 
 ## Status matrix
 
@@ -16,8 +16,9 @@ This page keeps artifact identity, runtime certification, release approval, regi
 | Release approval | Historical full-independent approvals exist for the exact historical release evidence. | None. Identity-only signatures are not release approvals. |
 | Registry publication | Historical release is listed in the signed static registry. | Not published. DeepSeek is intentionally absent from the release index and audit index. |
 | Current transparency authorization | Not operational for activation. The historical proof cohort requires approved migration and the advisory index requires its missing signature. | None; there is no release proof cohort. |
-| Authorized activation | Not established. | Not established. |
-| Production inference | Unavailable while the registry gate is closed. | Unavailable and unauthorized. |
+| Deployment / activation / loaded identity | Not established in production. | Not established. |
+| Exact team grant | No production exact-release grant is established. | Must not be granted before release publication, deployment, activation, fresh loaded identity, protected routing, and cap configuration. |
+| Production inference | Unavailable while the required production authority chain is absent. | Unavailable and unauthorized. |
 
 The DeepSeek approval files have SHA-256 values:
 
@@ -36,29 +37,32 @@ At the observation time:
 - the required signature for `advisories/v1/index.json` was absent; and
 - no authorized production hello-world request could pass the independent registry gate.
 
-A response from a legacy or directly addressed backend would be an operational observation only. It would not establish a signed release, approved activation, current transparency, team authorization, or loaded-byte identity.
+The source now verifies signed deployment and activation, fresh challenged loaded identity, protected route binding, exact grants, and synchronous accounting. No production evidence, key, route, grant, or deployment authorization is included here. A response from a legacy or directly addressed backend remains an operational observation only; it establishes none of those claims.
 
 ## Known path blockers
 
 - **Catalog migration:** four retained/current TinyStories documents lack previous-policy proofs. The complete catalog cannot use the reviewed migration until an explicit scope, recertification, or migration-policy decision is approved.
-- **Devstral cloud serving:** no identity-bound Devstral upstream is configured, and synchronous gateway usage accounting/monthly-cap enforcement is not established. Registry restoration alone cannot make it live.
+- **Devstral cloud serving:** source support exists for authority-bound protected routing and synchronous monthly-cap accounting, but no production Devstral authority evidence, protected route, exact grant, or deployed ledger observation is established. Registry restoration alone cannot make it live.
 - **DeepSeek serving contract:** the proposed backend alias differs from the currently observed router contract. That identifier must be resolved across release, API, router, launcher, and activation evidence; identity-only signatures do not decide it.
 
 ## What clients should do
 
 1. Require API and gateway readiness to be `200`.
-2. Resolve the team and choose only an ID present in its `models` list.
+2. Use authenticated gateway production discovery and choose only an ID returned there; do not authorize from the team compatibility fields.
 3. Treat `defaultModel` as a preference, not proof of availability.
 4. Do not hard-code DeepSeek or infer availability from this page.
-5. Handle `model_registry_unavailable`, `model_not_allowed`, and `model_unavailable` as distinct failures.
+5. Handle `model_registry_unavailable`, `serving_authority_unavailable`, `model_not_allowed`, `monthly_cap_exceeded`, and `model_unavailable` as distinct failures.
+6. Treat a stream as successful only after its protocol success terminal, which follows durable usage settlement.
 
 ## Terminology
 
 - **Artifact identity:** reviewers signed a digest-bound description of exact artifact bytes.
 - **Runtime certification:** approved evidence binds an exact runtime/material closure and execution profile.
 - **Release approval:** the release gate accepted exact evidence and subject bytes.
-- **Published:** a signed release is present in the registry; this does not prove it is loaded.
-- **Activated:** an approved deployment selected exact release/runtime identity.
-- **Available:** current registry verification, team authorization, and an identity-bound serving upstream all pass.
+- **Published:** a signed release is present in the registry; this does not prove it is deployed or loaded.
+- **Deployed:** signed evidence binds one exact registry release, artifact, and runtime identity.
+- **Activated:** signed authority binds that deployment to a protected route, backend alias, runtime limits, and billing rates.
+- **Loaded identity:** a fresh challenge binds the activation to the current serving instance and route incarnation.
+- **Available:** current registry verification, exact team grant, complete serving authority, and reservable capacity all pass.
 
 Never collapse these into an unqualified “approved”, “verified”, “green”, or “active” badge.

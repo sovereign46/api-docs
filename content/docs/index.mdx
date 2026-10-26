@@ -5,7 +5,7 @@ description: "Source API reference for the control plane and model gateway."
 
 ## Release status
 
-These pages describe the **current source contract**, including runtime metadata, cloud protocol normalization, independent-policy gates, session-control removal, and operator-only worker provisioning. They do not establish deployed availability or a new stable CLI release. No production trust policy is supplied or provisioned by these changes. Production URLs below identify service endpoints, not evidence that a model is live. The dated [model assurance status](/docs/model-status) records the current Devstral and DeepSeek evidence without collapsing identity, certification, publication, activation, and inference.
+These pages describe the **current source contract**, including immutable registry release identities, exact-release grants, signed serving authority, protected dispatch, and synchronous usage settlement. They do not establish deployed availability or a new stable CLI release. No production key, evidence bundle, protected route, grant, or deployment authorization is supplied by these changes. Production URLs below identify service endpoints, not evidence that a model is live. The dated [model assurance status](/docs/model-status) records current evidence without collapsing identity, certification, publication, deployment, activation, loaded identity, authorization, accounting, and inference.
 
 ## Two base URLs
 
@@ -18,6 +18,7 @@ The control plane handles identity and configuration; the harness gateway handle
 
 <Cards columns={2}>
   <Card href="/docs/quickstart" title="Quickstart" description="Authenticate, discover authorized models, and call the gateway." cta="Make your first call →" />
+  <Card href="/docs/serving-authority" title="Serving authority" description="Understand exact release, activation, loaded identity, route, grant, and accounting gates." cta="Read the serving gate →" />
   <Card href="/docs/model-status" title="Model assurance" description="See artifact, runtime, release, publication, activation, and inference status separately." cta="Check current status →" />
   <Card href="/docs/conventions" title="Conventions" description="Auth headers, rate limits, idempotency, pagination, versioning." cta="Read the rules →" />
   <Card href="/docs/errors" title="Errors" description="One envelope, one code catalog. Branch on status plus code." cta="See all codes →" />
@@ -29,9 +30,9 @@ The control plane handles identity and configuration; the harness gateway handle
 | --- | --- | --- |
 | `1` | Check status endpoints and wire JSON error handling. | [Operations](/docs/operations) |
 | `2` | Implement auth; store device-bound access and refresh credentials. | [Auth](/docs/auth) |
-| `3` | Read the current account, then resolve the selected team's metadata. | [Account](/docs/account) · [Teams](/docs/teams-sessions) |
-| `4` | Use the team's `endpoint`, authorized `models`, and `modelMetadata`; check the configured default is allowed. | [Gateway](/docs/gateway) |
-| `5` | If the user is an org/team admin, expose admin and model-policy routes. | [Admin](/docs/admin) · [Models](/docs/models) |
+| `3` | Read the current account, then resolve the selected team's gateway settings and configured default. | [Account](/docs/account) · [Teams](/docs/teams-sessions) |
+| `4` | Fetch authenticated gateway model discovery; authorize only from its active exact-granted list and validate the configured default there. | [Gateway](/docs/gateway) |
+| `5` | If the user is an org/team admin, expose exact-release grant administration; keep serving-authority inspection operator-only. | [Admin](/docs/admin) · [Models](/docs/models) |
 | `6` | Operators provision workers; returned worker credentials authorize lifecycle calls, not provisioning. | [Worker control](/docs/worker-control) |
 
 ## Core rules
@@ -72,8 +73,9 @@ Query parameters must be query-escaped, e.g. `?team=%40s46%2Fengineering`.
 | Account | `/v1/me` · `/v1/devices` | User and devices |
 | Teams / sessions | `/v1/teams` · `/v1/sessions` | Team config and sessions |
 | Admin | `/v1/admin` | Orgs, people, workers, jobs |
-| Models | `/v1/admin/models` · `/v1/admin/model-policies` | Release catalog and team policy |
-| Model assurance | signed registry · readiness · serving | Separate evidence and availability states |
+| Models | `/v1/admin/models` · `/v1/admin/model-release-grants` | Registry identities and exact team grants |
+| Serving authority | `/v1/admin/serving-authority` · readiness · gateway | Operator inspection and protected serving gate |
+| Model assurance | signed registry · dated evidence | Separate evidence and availability states |
 | Worker control | `/v1/worker` · `/v1/internal` | Register and lease jobs |
 | Harness gateway | `gateway.s46.dev` | Model APIs |
 

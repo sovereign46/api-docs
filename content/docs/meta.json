@@ -11,6 +11,7 @@
     "teams-sessions",
     "admin",
     "models",
+    "serving-authority",
     "model-status",
     "worker-control",
     "gateway"
